@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+langgraph
+psycopg[binary]
+pgvector
+pytest
