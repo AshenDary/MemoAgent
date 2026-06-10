@@ -10,6 +10,10 @@ venv/
 # Env files
 .env
 
+# Private transcript data
+data/transcripts/raw/*
+!data/transcripts/raw/.gitkeep
+
 # Tooling
 .pytest_cache/
 .mypy_cache/

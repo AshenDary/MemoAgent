@@ -1,6 +1,32 @@
+# Web Framework
 fastapi
-uvicorn
+uvicorn[standard]
+
+# Agent & RAG
 langgraph
+langchain
+langchain-community
+
+# LLM & Embeddings
+groq
+google-generativeai
+
+# Vector DB & ORM
 psycopg[binary]
 pgvector
+supabase
+httpx
+
+# Security
+bleach
+pydantic
+
+# Environment & Logging
+python-dotenv
+loguru
+
+# Testing
 pytest
+
+# NLP (optional - requires C compiler, install separately if needed)
+# spacy
