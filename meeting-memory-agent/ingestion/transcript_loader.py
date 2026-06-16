@@ -1,5 +1,7 @@
 """Load and normalize raw transcript files for downstream processing."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 

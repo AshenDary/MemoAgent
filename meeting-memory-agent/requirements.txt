@@ -6,6 +6,7 @@ uvicorn[standard]
 langgraph
 langchain
 langchain-community
+langchain-text-splitters
 
 # LLM & Embeddings
 groq
@@ -29,4 +30,4 @@ loguru
 pytest
 
 # NLP (optional - requires C compiler, install separately if needed)
-# spacy
+spacy>=3.7,<3.8
