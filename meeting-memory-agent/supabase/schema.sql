@@ -32,6 +32,41 @@ on public.transcript_chunks
 using ivfflat (embedding vector_cosine_ops)
 with (lists = 100);
 
+-- WHAT THIS DOES: Finds the transcript chunks closest to a query embedding for one workspace.
+-- WHY THIS MATTERS: Phase 2 retrieval needs fast, tenant-scoped semantic search with similarity scores.
+create or replace function public.match_transcript_chunks(
+    query_embedding vector(768),
+    match_workspace_id text,
+    match_count integer default 5,
+    match_threshold double precision default 0
+)
+returns table (
+    id uuid,
+    workspace_id text,
+    filename text,
+    chunk_index integer,
+    content text,
+    metadata jsonb,
+    similarity double precision
+)
+language sql
+stable
+as $$
+    select
+        transcript_chunks.id,
+        transcript_chunks.workspace_id,
+        transcript_chunks.filename,
+        transcript_chunks.chunk_index,
+        transcript_chunks.content,
+        transcript_chunks.metadata,
+        1 - (transcript_chunks.embedding <=> query_embedding) as similarity
+    from public.transcript_chunks
+    where transcript_chunks.workspace_id = match_workspace_id
+      and 1 - (transcript_chunks.embedding <=> query_embedding) >= match_threshold
+    order by transcript_chunks.embedding <=> query_embedding
+    limit match_count;
+$$;
+
 -- WHAT THIS DOES: Enables Row Level Security on meeting memory rows.
 -- WHY THIS MATTERS: Multi-tenant data must not be readable across workspaces.
 alter table public.transcript_chunks enable row level security;
