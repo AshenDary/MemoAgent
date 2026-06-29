@@ -70,27 +70,57 @@ docker run --rm --env-file .env -p 8000:8000 \
 
 ## Verification
 
-Run the Phase 1 tests:
+Run the test suite:
 
 ```bash
-.venv/bin/python -m pytest tests/test_transcript_loader.py tests/test_sanitizer.py tests/test_embedder.py
+.venv/bin/python -m pytest
 ```
 
 ## Status
 
 - Phase 1 is verified locally.
-- Phase 2 is in progress.
+- Phase 2 is complete in local mocked tests: retrieval, cited RAG answers, weak-evidence fallback, retrieval logging, `top_k` evaluation coverage, and RLS schema checks are implemented.
+- Phase 3 is complete for the local backend: LangGraph routes to workspace-scoped tools for transcript search, meeting summaries, decisions, action items, meeting inventory, and normal RAG answers. The API exposes `POST /agent/query` with session memory and tool-call rate limiting.
 - `GET /meetings` is implemented.
 
-## Phase 2 Finishing Work
+## Phase 3 API
 
-Once the live RAG check passes, the remaining Phase 2 work is:
+Start the API:
 
-- Add stronger citation formatting.
-- Add retrieval evaluation tests for `top_k=3` vs `top_k=10`.
-- Add hallucination checks, including explicit "I don't know" behavior when evidence is weak.
-- Add better logging around retrieved chunks.
-- Confirm the RLS/security policy story before moving to Phase 3.
+```bash
+.venv/bin/uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Ask the Phase 3 agent:
+
+```bash
+curl -X POST http://127.0.0.1:8000/agent/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspace_id": "workspace_123",
+    "session_id": "local_test",
+    "message": "What action items came from the launch meeting?",
+    "top_k": 5
+  }'
+```
+
+Use these message styles to exercise the router:
+
+- `"Search for launch plan mentions"` -> `search_transcripts`
+- `"Summarize this meeting"` with `"meeting_id": "<filename_hash>"` -> `summarize_meeting`
+- `"What decisions were made about launch?"` -> `extract_decisions`
+- `"What action items are open?"` -> `find_action_items`
+- `"List meetings"` -> `list_meetings`
+- General questions -> `answer_from_memory`
+
+## Next Work
+
+Phase 4 is next. The backend should now move from agent behavior into security hardening:
+
+- Add API key creation and bcrypt hashing.
+- Protect endpoints with workspace-scoped API-key auth.
+- Add the transcript upload endpoint with MIME and 10MB file-size validation.
+- Persist audit logs/session memory instead of keeping agent session state in process memory.
 
 ## Security Notes
 

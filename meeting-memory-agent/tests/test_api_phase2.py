@@ -109,3 +109,100 @@ def test_get_meetings_endpoint_returns_meeting_summaries(monkeypatch: Any) -> No
     assert body["workspace_id"] == "workspace_123"
     assert body["meetings"][0]["filename"] == "weekly-sync.txt"
     assert body["meetings"][0]["chunk_count"] == 4
+
+
+def test_agent_query_endpoint_returns_routed_response(monkeypatch: Any) -> None:
+    api_main._AGENT_SESSIONS.clear()
+
+    class FakeAgentGraph:
+        def invoke(self, state: dict[str, Any]) -> dict[str, Any]:
+            return {
+                **state,
+                "selected_tool": "find_action_items",
+                "answer": "Dana will send the launch checklist",
+                "citations": ["source:weekly-sync.txt:chunk:2"],
+                "chunks": [],
+                "tool_call_count": state["tool_call_count"] + 1,
+                "conversation_history": [*state["conversation_history"], state["question"]],
+            }
+
+    monkeypatch.setattr(api_main, "_AGENT_GRAPH", FakeAgentGraph())
+
+    response = client.post(
+        "/agent/query",
+        json={
+            "workspace_id": "workspace_123",
+            "session_id": "session_123",
+            "message": "<b>What action items are open?</b>",
+            "top_k": 3,
+        },
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["selected_tool"] == "find_action_items"
+    assert body["answer"] == "Dana will send the launch checklist"
+    assert body["tool_call_count"] == 1
+    assert body["conversation_history"] == ["What action items are open?"]
+
+
+def test_agent_query_endpoint_preserves_session_state(monkeypatch: Any) -> None:
+    api_main._AGENT_SESSIONS.clear()
+
+    class FakeAgentGraph:
+        def invoke(self, state: dict[str, Any]) -> dict[str, Any]:
+            return {
+                **state,
+                "selected_tool": "answer_from_memory",
+                "answer": "ok",
+                "citations": [],
+                "chunks": [],
+                "tool_call_count": state["tool_call_count"] + 1,
+                "conversation_history": [*state["conversation_history"], state["question"]],
+            }
+
+    monkeypatch.setattr(api_main, "_AGENT_GRAPH", FakeAgentGraph())
+
+    first = client.post(
+        "/agent/query",
+        json={
+            "workspace_id": "workspace_123",
+            "session_id": "session_123",
+            "message": "First question",
+        },
+    )
+    second = client.post(
+        "/agent/query",
+        json={
+            "workspace_id": "workspace_123",
+            "session_id": "session_123",
+            "message": "Second question",
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["tool_call_count"] == 2
+    assert second.json()["conversation_history"] == ["First question", "Second question"]
+
+
+def test_agent_query_endpoint_returns_429_for_tool_limit(monkeypatch: Any) -> None:
+    api_main._AGENT_SESSIONS.clear()
+
+    class FakeAgentGraph:
+        def invoke(self, state: dict[str, Any]) -> dict[str, Any]:
+            raise RuntimeError("Tool call limit reached for this session")
+
+    monkeypatch.setattr(api_main, "_AGENT_GRAPH", FakeAgentGraph())
+
+    response = client.post(
+        "/agent/query",
+        json={
+            "workspace_id": "workspace_123",
+            "session_id": "session_123",
+            "message": "Find action items",
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": "Tool call limit reached for this session"}

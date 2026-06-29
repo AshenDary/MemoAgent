@@ -39,7 +39,7 @@ class FakeSupabaseClient:
     def rpc(self, name: str, params: dict[str, Any]) -> FakeRpcCall:
         self.rpc_name = name
         self.rpc_params = params
-        return FakeRpcCall(self.rows)
+        return FakeRpcCall(self.rows[: int(params["match_count"])])
 
 
 class FakeGroqClient:
@@ -110,9 +110,12 @@ def test_build_rag_prompt_includes_citations_and_context() -> None:
 
     prompt = build_rag_prompt(question="What did we decide?", chunks=[chunk])
 
-    assert "[weekly-sync.txt#2 2026-06-15]" in prompt
+    assert "[source:weekly-sync.txt:chunk:2:date:2026-06-15]" in prompt
+    assert "Source: weekly-sync.txt" in prompt
+    assert "Similarity: 0.880" in prompt
     assert "The team approved the launch plan." in prompt
     assert "If the context does not contain the answer" in prompt
+    assert "Every factual claim must include a citation" in prompt
 
 
 def test_answer_question_returns_grounded_answer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -131,7 +134,7 @@ def test_answer_question_returns_grounded_answer(monkeypatch: pytest.MonkeyPatch
         ]
     )
     fake_groq = FakeGroqClient(
-        "The launch plan was approved [weekly-sync.txt#0 2026-06-15]."
+        "The launch plan was approved [source:weekly-sync.txt:chunk:0:date:2026-06-15]."
     )
 
     result = answer_question(
@@ -141,8 +144,10 @@ def test_answer_question_returns_grounded_answer(monkeypatch: pytest.MonkeyPatch
         llm_client=fake_groq,
     )
 
-    assert result.answer == "The launch plan was approved [weekly-sync.txt#0 2026-06-15]."
-    assert result.citations == ["weekly-sync.txt#0 2026-06-15"]
+    assert result.answer == (
+        "The launch plan was approved [source:weekly-sync.txt:chunk:0:date:2026-06-15]."
+    )
+    assert result.citations == ["source:weekly-sync.txt:chunk:0:date:2026-06-15"]
     assert fake_groq.messages is not None
     assert "The launch plan was approved." in fake_groq.messages[1]["content"]
 
@@ -163,3 +168,66 @@ def test_answer_question_returns_unknown_when_no_context(
     assert result.answer == "I do not know based on the available meeting transcripts."
     assert result.citations == []
     assert result.chunks == []
+
+
+def test_retrieval_respects_top_k_for_evaluation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(retriever, "embed_text", lambda text, task_type: [0.1, 0.2, 0.3])
+    rows = [
+        {
+            "id": f"chunk-{index}",
+            "workspace_id": "workspace_123",
+            "filename": "weekly-sync.txt",
+            "chunk_index": index,
+            "content": f"Context {index}",
+            "metadata": {"meeting_date": "2026-06-15"},
+            "similarity": 0.9 - (index * 0.01),
+        }
+        for index in range(10)
+    ]
+    fake_client = FakeSupabaseClient(rows=rows)
+
+    top_three = retrieve_relevant_chunks(
+        query="launch plan",
+        workspace_id="workspace_123",
+        top_k=3,
+        client=fake_client,
+    )
+    top_ten = retrieve_relevant_chunks(
+        query="launch plan",
+        workspace_id="workspace_123",
+        top_k=10,
+        client=fake_client,
+    )
+
+    assert len(top_three) == 3
+    assert len(top_ten) == 10
+    assert top_three == top_ten[:3]
+
+
+def test_answer_question_returns_unknown_when_evidence_is_weak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(retriever, "embed_text", lambda text, task_type: [0.1, 0.2, 0.3])
+    fake_client = FakeSupabaseClient(
+        rows=[
+            {
+                "id": "chunk-1",
+                "workspace_id": "workspace_123",
+                "filename": "weekly-sync.txt",
+                "chunk_index": 0,
+                "content": "Unrelated budget chat.",
+                "metadata": {"meeting_date": "2026-06-15"},
+                "similarity": 0.05,
+            }
+        ]
+    )
+
+    result = answer_question(
+        question="Was the launch plan approved?",
+        workspace_id="workspace_123",
+        client=fake_client,
+        llm_client=FakeGroqClient("Should not be called"),
+    )
+
+    assert result.answer == "I do not know based on the available meeting transcripts."
+    assert result.citations == ["source:weekly-sync.txt:chunk:0:date:2026-06-15"]

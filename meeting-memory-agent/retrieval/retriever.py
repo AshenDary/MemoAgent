@@ -19,6 +19,7 @@ from security.sanitize import sanitize_text
 
 DEFAULT_TOP_K = 5
 DEFAULT_MATCH_THRESHOLD = 0.0
+DEFAULT_MIN_ANSWER_SIMILARITY = 0.2
 GROQ_CHAT_MODEL = "llama-3.3-70b-versatile"
 MATCH_CHUNKS_RPC = "match_transcript_chunks"
 PROMPT_INJECTION_PATTERN = re.compile(
@@ -106,7 +107,9 @@ def retrieve_relevant_chunks(
         raise RuntimeError("Unable to retrieve transcript chunks") from exc
 
     rows = response.data or []
-    return [_row_to_chunk(row) for row in rows]
+    chunks = [_row_to_chunk(row) for row in rows]
+    _log_retrieved_chunks(query=safe_query, workspace_id=workspace_id, chunks=chunks)
+    return chunks
 
 
 # WHAT THIS DOES: Keeps the old search_memories name as a small wrapper around real retrieval.
@@ -126,6 +129,41 @@ def search_memories(
         client=client,
     )
     return [_model_to_dict(chunk) for chunk in chunks]
+
+
+# WHAT THIS DOES: Loads all stored chunks for one meeting identifier inside one workspace.
+# WHY THIS MATTERS: Phase 3 meeting-specific tools need exact meeting scope, not broad semantic search.
+# SECURITY NOTE: Both workspace_id and filename_hash are required filters so tenants cannot cross-read data.
+def retrieve_meeting_chunks(
+    *,
+    meeting_id: str,
+    workspace_id: str,
+    client: Client | None = None,
+) -> list[RetrievedChunk]:
+    """Return chunks for one workspace-scoped meeting by filename hash."""
+    safe_meeting_id = sanitize_text(meeting_id).strip()
+    if not safe_meeting_id:
+        raise ValueError("meeting_id must not be empty")
+
+    if not workspace_id.strip():
+        raise ValueError("workspace_id must not be empty")
+
+    supabase = client or get_supabase_client()
+
+    try:
+        response = (
+            supabase.table("transcript_chunks")
+            .select("id, workspace_id, filename, filename_hash, chunk_index, content, metadata")
+            .eq("workspace_id", workspace_id)
+            .eq("filename_hash", safe_meeting_id)
+            .order("chunk_index")
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Supabase meeting chunk lookup failed")
+        raise RuntimeError("Unable to retrieve meeting chunks") from exc
+
+    return [_meeting_row_to_chunk(row) for row in response.data or []]
 
 
 # WHAT THIS DOES: Lists one row per uploaded meeting for a workspace.
@@ -200,6 +238,7 @@ def answer_question(
     question: str,
     workspace_id: str,
     top_k: int = DEFAULT_TOP_K,
+    min_answer_similarity: float = DEFAULT_MIN_ANSWER_SIMILARITY,
     client: Client | None = None,
     llm_client: Groq | None = None,
 ) -> RAGAnswer:
@@ -207,6 +246,9 @@ def answer_question(
     safe_question = sanitize_text(question).strip()
     if not safe_question:
         raise ValueError("question must not be empty")
+
+    if not -1.0 <= min_answer_similarity <= 1.0:
+        raise ValueError("min_answer_similarity must be between -1.0 and 1.0")
 
     chunks = retrieve_relevant_chunks(
         query=safe_question,
@@ -221,6 +263,20 @@ def answer_question(
             answer="I do not know based on the available meeting transcripts.",
             citations=[],
             chunks=[],
+        )
+
+    if max(chunk.similarity for chunk in chunks) < min_answer_similarity:
+        logger.info(
+            "RAG evidence below answer threshold: workspace_id={} top_similarity={:.3f} threshold={:.3f}",
+            workspace_id,
+            max(chunk.similarity for chunk in chunks),
+            min_answer_similarity,
+        )
+        return RAGAnswer(
+            question=safe_question,
+            answer="I do not know based on the available meeting transcripts.",
+            citations=[_citation_label(chunk) for chunk in chunks],
+            chunks=chunks,
         )
 
     prompt = build_rag_prompt(question=safe_question, chunks=chunks)
@@ -238,7 +294,14 @@ def answer_question(
 def build_rag_prompt(*, question: str, chunks: list[RetrievedChunk]) -> str:
     """Create a grounded RAG prompt with citation labels."""
     context_blocks = [
-        f"[{_citation_label(chunk)}]\n{_sanitize_retrieved_content(chunk.content)}"
+        (
+            f"[{_citation_label(chunk)}]\n"
+            f"Source: {chunk.filename}\n"
+            f"Meeting date: {chunk.metadata.get('meeting_date', 'unknown')}\n"
+            f"Chunk: {chunk.chunk_index}\n"
+            f"Similarity: {chunk.similarity:.3f}\n"
+            f"Excerpt: {_sanitize_retrieved_content(chunk.content)}"
+        )
         for chunk in chunks
     ]
     context = "\n\n".join(context_blocks)
@@ -248,7 +311,8 @@ def build_rag_prompt(*, question: str, chunks: list[RetrievedChunk]) -> str:
         "meeting transcript context.\n"
         "If the context does not contain the answer, say you do not know based on the "
         "available meeting transcripts.\n"
-        "Cite sources inline using the bracketed source labels exactly as provided.\n\n"
+        "Cite sources inline using the bracketed source labels exactly as provided. "
+        "Every factual claim must include a citation.\n\n"
         f"Question:\n{question}\n\n"
         f"Meeting transcript context:\n{context}\n\n"
         "Answer:"
@@ -270,6 +334,24 @@ def _row_to_chunk(row: dict[str, Any]) -> RetrievedChunk:
     )
 
 
+# WHAT THIS DOES: Converts a direct meeting row into a RetrievedChunk-like object for tools.
+# WHY THIS MATTERS: Summary tools can reuse the same chunk shape even though direct lookup has no vector score.
+def _meeting_row_to_chunk(row: dict[str, Any]) -> RetrievedChunk:
+    """Validate and sanitize a meeting chunk row."""
+    return RetrievedChunk(
+        id=str(row["id"]) if row.get("id") is not None else None,
+        workspace_id=str(row["workspace_id"]),
+        filename=str(row["filename"]),
+        chunk_index=int(row["chunk_index"]),
+        content=_sanitize_retrieved_content(str(row["content"])),
+        metadata={
+            **dict(row.get("metadata") or {}),
+            "filename_hash": str(row.get("filename_hash", "")),
+        },
+        similarity=1.0,
+    )
+
+
 # WHAT THIS DOES: Strips HTML and obvious prompt-injection phrases from retrieved meeting text.
 # WHY THIS MATTERS: Retrieved content is untrusted because transcripts can contain malicious instructions.
 def _sanitize_retrieved_content(content: str) -> str:
@@ -282,11 +364,36 @@ def _sanitize_retrieved_content(content: str) -> str:
 # WHY THIS MATTERS: The LLM and UI need a stable source handle to show where an answer came from.
 def _citation_label(chunk: RetrievedChunk) -> str:
     """Return a human-readable source label for citation."""
+    source_id = f"source:{chunk.filename}:chunk:{chunk.chunk_index}"
     meeting_date = chunk.metadata.get("meeting_date")
     if meeting_date:
-        return f"{chunk.filename}#{chunk.chunk_index} {meeting_date}"
+        return f"{source_id}:date:{meeting_date}"
 
-    return f"{chunk.filename}#{chunk.chunk_index}"
+    return source_id
+
+
+# WHAT THIS DOES: Logs each retrieved chunk without dumping full transcript text into logs.
+# WHY THIS MATTERS: Phase 2 needs retrieval auditability, but logs should avoid storing sensitive content.
+def _log_retrieved_chunks(
+    *,
+    query: str,
+    workspace_id: str,
+    chunks: list[RetrievedChunk],
+) -> None:
+    """Write concise retrieval audit logs for debugging and security review."""
+    logger.info(
+        "Retrieved {} chunks for workspace_id={} query_length={}",
+        len(chunks),
+        workspace_id,
+        len(query),
+    )
+    for chunk in chunks:
+        logger.debug(
+            "Retrieved chunk source={} workspace_id={} similarity={:.3f}",
+            _citation_label(chunk),
+            workspace_id,
+            chunk.similarity,
+        )
 
 
 # WHAT THIS DOES: Pulls the meeting date from a stored chunk row when one was recorded during ingestion.

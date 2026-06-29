@@ -20,6 +20,8 @@ def test_schema_defines_transcript_chunks_table() -> None:
     assert "embedding vector(768) not null" in schema_sql
     assert "create or replace function public.match_transcript_chunks" in schema_sql
     assert "alter table public.transcript_chunks enable row level security" in schema_sql
+    assert "create policy" not in schema_sql.lower()
+    assert "No public anon policies are added here" in schema_sql
 
 
 def test_apply_schema_executes_sql_and_commits(monkeypatch: pytest.MonkeyPatch) -> None:

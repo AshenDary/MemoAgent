@@ -225,23 +225,42 @@ Phase 1 verified locally. Transcript loading, sanitization, PII masking,
 chunking, embedding record preparation, Supabase persistence helpers, and
 Phase 1 tests are implemented and passing.
 
-Phase 2 started. The RAG core now includes query embedding, tenant-scoped
-Supabase pgvector retrieval, retrieved-content sanitization, Groq answer
-generation with citation prompting, a minimal LangGraph entry point, and
-focused tests with mocked external services. The API also has a Phase 2
-`POST /query` endpoint plus `GET /meetings`, and `scripts/run_live_rag_check.py` can run a live
-synthetic ingest/retrieve/generate check after the Supabase schema is applied.
+Phase 2 is complete in local mocked tests. The RAG core includes query embedding,
+tenant-scoped Supabase pgvector retrieval, retrieved-content sanitization, Groq
+answer generation with source-style citation labels, weak-evidence "I do not
+know" fallback behavior, retrieval audit logging, and tests for `top_k=3` vs
+`top_k=10`. The API has a Phase 2 `POST /query` endpoint plus `GET /meetings`,
+and the Supabase schema enables RLS without adding broad anon policies.
 
-## Phase 2 Finishing Work
+Phase 3 is complete for the local backend. LangGraph now uses a routed agent flow:
 
-Once the live RAG check is passing, finish Phase 2 by tightening the RAG
-surface before moving to the agent layer:
+```text
+User message -> deterministic router -> bounded tool execution -> response synthesis
+```
 
-- Add stronger citation formatting so answers point more clearly to meeting source text.
-- Add retrieval evaluation tests for `top_k=3` vs `top_k=10`.
-- Add hallucination checks, including explicit "I don't know" behavior when evidence is weak.
-- Add better logging around retrieved chunks so debugging and auditability are clearer.
-- Confirm the RLS/security policy story before moving to Phase 3.
+Implemented tools:
+- `search_transcripts(query)`
+- `summarize_meeting(meeting_id)`
+- `extract_decisions(query)`
+- `find_action_items(query)`
+- `list_meetings(date_range)`
+- `answer_from_memory(question)`
+
+Phase 3 guardrails implemented:
+- Max 20 tool calls per session
+- Short conversation history in graph state
+- Loguru audit logs for tool calls
+- Retrieved content sanitization before prompting or extraction
+- `POST /agent/query` API endpoint with in-memory local session state
+
+## Phase 4 Next Work
+
+- Add API key creation and bcrypt hashing.
+- Protect endpoints with workspace-scoped API-key auth.
+- Add `POST /upload` with MIME checks and 10MB file-size validation.
+- Persist audit logs and session memory instead of keeping agent session state
+  in process memory.
+- Add security tests for auth, file upload validation, XSS, and oversized files.
 
 ## Learning Goals
 - Understand and implement RAG from scratch, not just use a library
