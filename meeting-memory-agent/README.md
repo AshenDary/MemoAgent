@@ -94,8 +94,13 @@ Start the API:
 Ask the Phase 3 agent:
 
 ```bash
+API_KEY=$(curl -s -X POST http://127.0.0.1:8000/auth/create-key \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id": "workspace_123"}' | python -c "import json,sys; print(json.load(sys.stdin)['api_key'])")
+
 curl -X POST http://127.0.0.1:8000/agent/query \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{
     "workspace_id": "workspace_123",
     "session_id": "local_test",
@@ -115,11 +120,27 @@ Use these message styles to exercise the router:
 
 ## Next Work
 
-Phase 4 is next. The backend should now move from agent behavior into security hardening:
+Phase 4 is now in progress:
 
-- Add API key creation and bcrypt hashing.
-- Protect endpoints with workspace-scoped API-key auth.
-- Add the transcript upload endpoint with MIME and 10MB file-size validation.
+- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes in local memory.
+- `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` require `X-API-Key`.
+- `POST /upload` validates transcript MIME type, file extension, empty files, and the 10MB upload limit.
+- CORS is deny-by-default unless `ALLOWED_ORIGINS` is set.
+- Supabase schema includes RLS-enabled `api_keys` and `audit_logs` tables for the next persistence step.
+
+Upload a transcript:
+
+```bash
+curl -X POST http://127.0.0.1:8000/upload \
+  -H "X-API-Key: $API_KEY" \
+  -F "workspace_id=workspace_123" \
+  -F "meeting_date=2026-06-29" \
+  -F "file=@/path/to/meeting.txt;type=text/plain"
+```
+
+Remaining Phase 4 hardening:
+
+- Persist API-key hashes in Supabase instead of local process memory.
 - Persist audit logs/session memory instead of keeping agent session state in process memory.
 
 ## Security Notes

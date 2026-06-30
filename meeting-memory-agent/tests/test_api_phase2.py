@@ -8,10 +8,18 @@ from fastapi.testclient import TestClient
 
 import api.main as api_main
 from api.main import app
+from ingestion.embedder import TranscriptChunk
 from retrieval.retriever import MeetingSummary, RAGAnswer, RetrievedChunk
 
 
 client = TestClient(app)
+
+
+def _create_test_api_key(workspace_id: str = "workspace_123") -> str:
+    api_main._API_KEY_STORE.clear()
+    response = client.post("/auth/create-key", json={"workspace_id": workspace_id})
+    assert response.status_code == 200
+    return str(response.json()["api_key"])
 
 
 def test_health_check_returns_ok() -> None:
@@ -21,7 +29,22 @@ def test_health_check_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_cors_is_not_wildcard_by_default() -> None:
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": "https://untrusted.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.headers.get("access-control-allow-origin") is None
+
+
 def test_query_endpoint_returns_rag_answer(monkeypatch: Any) -> None:
+    api_key = _create_test_api_key()
+
     def fake_answer_question(*, question: str, workspace_id: str, top_k: int) -> RAGAnswer:
         return RAGAnswer(
             question=question,
@@ -42,6 +65,7 @@ def test_query_endpoint_returns_rag_answer(monkeypatch: Any) -> None:
 
     response = client.post(
         "/query",
+        headers={"X-API-Key": api_key},
         json={
             "workspace_id": "workspace_123",
             "question": "<b>Was the launch approved?</b>",
@@ -57,6 +81,8 @@ def test_query_endpoint_returns_rag_answer(monkeypatch: Any) -> None:
 
 
 def test_query_endpoint_hides_internal_errors(monkeypatch: Any) -> None:
+    api_key = _create_test_api_key()
+
     def fake_answer_question(*, question: str, workspace_id: str, top_k: int) -> RAGAnswer:
         raise RuntimeError("database password leaked here would be bad")
 
@@ -64,6 +90,7 @@ def test_query_endpoint_hides_internal_errors(monkeypatch: Any) -> None:
 
     response = client.post(
         "/query",
+        headers={"X-API-Key": api_key},
         json={
             "workspace_id": "workspace_123",
             "question": "Was the launch approved?",
@@ -75,8 +102,11 @@ def test_query_endpoint_hides_internal_errors(monkeypatch: Any) -> None:
 
 
 def test_query_endpoint_validates_top_k_limit() -> None:
+    api_key = _create_test_api_key()
+
     response = client.post(
         "/query",
+        headers={"X-API-Key": api_key},
         json={
             "workspace_id": "workspace_123",
             "question": "Was the launch approved?",
@@ -88,6 +118,8 @@ def test_query_endpoint_validates_top_k_limit() -> None:
 
 
 def test_get_meetings_endpoint_returns_meeting_summaries(monkeypatch: Any) -> None:
+    api_key = _create_test_api_key()
+
     def fake_list_meetings(*, workspace_id: str) -> list[MeetingSummary]:
         return [
             MeetingSummary(
@@ -102,7 +134,11 @@ def test_get_meetings_endpoint_returns_meeting_summaries(monkeypatch: Any) -> No
 
     monkeypatch.setattr(api_main, "list_meetings", fake_list_meetings)
 
-    response = client.get("/meetings", params={"workspace_id": "workspace_123"})
+    response = client.get(
+        "/meetings",
+        headers={"X-API-Key": api_key},
+        params={"workspace_id": "workspace_123"},
+    )
 
     body = response.json()
     assert response.status_code == 200
@@ -113,6 +149,7 @@ def test_get_meetings_endpoint_returns_meeting_summaries(monkeypatch: Any) -> No
 
 def test_agent_query_endpoint_returns_routed_response(monkeypatch: Any) -> None:
     api_main._AGENT_SESSIONS.clear()
+    api_key = _create_test_api_key()
 
     class FakeAgentGraph:
         def invoke(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +167,7 @@ def test_agent_query_endpoint_returns_routed_response(monkeypatch: Any) -> None:
 
     response = client.post(
         "/agent/query",
+        headers={"X-API-Key": api_key},
         json={
             "workspace_id": "workspace_123",
             "session_id": "session_123",
@@ -148,6 +186,7 @@ def test_agent_query_endpoint_returns_routed_response(monkeypatch: Any) -> None:
 
 def test_agent_query_endpoint_preserves_session_state(monkeypatch: Any) -> None:
     api_main._AGENT_SESSIONS.clear()
+    api_key = _create_test_api_key()
 
     class FakeAgentGraph:
         def invoke(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -165,6 +204,7 @@ def test_agent_query_endpoint_preserves_session_state(monkeypatch: Any) -> None:
 
     first = client.post(
         "/agent/query",
+        headers={"X-API-Key": api_key},
         json={
             "workspace_id": "workspace_123",
             "session_id": "session_123",
@@ -173,6 +213,7 @@ def test_agent_query_endpoint_preserves_session_state(monkeypatch: Any) -> None:
     )
     second = client.post(
         "/agent/query",
+        headers={"X-API-Key": api_key},
         json={
             "workspace_id": "workspace_123",
             "session_id": "session_123",
@@ -188,6 +229,7 @@ def test_agent_query_endpoint_preserves_session_state(monkeypatch: Any) -> None:
 
 def test_agent_query_endpoint_returns_429_for_tool_limit(monkeypatch: Any) -> None:
     api_main._AGENT_SESSIONS.clear()
+    api_key = _create_test_api_key()
 
     class FakeAgentGraph:
         def invoke(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -197,6 +239,7 @@ def test_agent_query_endpoint_returns_429_for_tool_limit(monkeypatch: Any) -> No
 
     response = client.post(
         "/agent/query",
+        headers={"X-API-Key": api_key},
         json={
             "workspace_id": "workspace_123",
             "session_id": "session_123",
@@ -206,3 +249,113 @@ def test_agent_query_endpoint_returns_429_for_tool_limit(monkeypatch: Any) -> No
 
     assert response.status_code == 429
     assert response.json() == {"detail": "Tool call limit reached for this session"}
+
+
+def test_create_key_returns_plaintext_once_and_stores_hash() -> None:
+    api_main._API_KEY_STORE.clear()
+
+    response = client.post("/auth/create-key", json={"workspace_id": "workspace_123"})
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["api_key"].startswith("mma_")
+    stored = api_main._API_KEY_STORE[body["key_id"]]
+    assert stored.workspace_id == "workspace_123"
+    assert stored.key_hash != body["api_key"]
+
+
+def test_protected_endpoint_rejects_missing_api_key() -> None:
+    api_main._API_KEY_STORE.clear()
+
+    response = client.get("/meetings", params={"workspace_id": "workspace_123"})
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Missing API key"}
+
+
+def test_protected_endpoint_rejects_cross_workspace_key() -> None:
+    api_key = _create_test_api_key(workspace_id="workspace_a")
+
+    response = client.get(
+        "/meetings",
+        headers={"X-API-Key": api_key},
+        params={"workspace_id": "workspace_b"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Invalid API key for workspace"}
+
+
+def test_upload_endpoint_validates_and_ingests_transcript(monkeypatch: Any) -> None:
+    api_key = _create_test_api_key()
+    calls: list[dict[str, Any]] = []
+
+    def fake_ingest_transcript_file(
+        *,
+        file_path: str,
+        workspace_id: str,
+        metadata: dict[str, Any],
+        source_filename: str,
+    ) -> list[TranscriptChunk]:
+        calls.append(
+            {
+                "file_path": file_path,
+                "workspace_id": workspace_id,
+                "metadata": metadata,
+                "source_filename": source_filename,
+            }
+        )
+        return [
+            TranscriptChunk(
+                workspace_id=workspace_id,
+                filename=source_filename,
+                filename_hash="hash",
+                chunk_index=0,
+                content="Launch approved.",
+                embedding=[0.1, 0.2, 0.3],
+            )
+        ]
+
+    monkeypatch.setattr(api_main, "ingest_transcript_file", fake_ingest_transcript_file)
+
+    response = client.post(
+        "/upload",
+        headers={"X-API-Key": api_key},
+        data={"workspace_id": "workspace_123", "meeting_date": "2026-06-29"},
+        files={"file": ("weekly-sync.txt", b"Alice: Launch approved.", "text/plain")},
+    )
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["filename"] == "weekly-sync.txt"
+    assert body["chunks_stored"] == 1
+    assert calls[0]["source_filename"] == "weekly-sync.txt"
+    assert calls[0]["metadata"] == {"meeting_date": "2026-06-29"}
+
+
+def test_upload_endpoint_rejects_bad_mime_type() -> None:
+    api_key = _create_test_api_key()
+
+    response = client.post(
+        "/upload",
+        headers={"X-API-Key": api_key},
+        data={"workspace_id": "workspace_123"},
+        files={"file": ("weekly-sync.txt", b"hello", "application/pdf")},
+    )
+
+    assert response.status_code == 415
+    assert response.json() == {"detail": "Unsupported transcript MIME type"}
+
+
+def test_upload_endpoint_rejects_oversized_file() -> None:
+    api_key = _create_test_api_key()
+
+    response = client.post(
+        "/upload",
+        headers={"X-API-Key": api_key},
+        data={"workspace_id": "workspace_123"},
+        files={"file": ("weekly-sync.txt", b"a" * (10 * 1024 * 1024 + 1), "text/plain")},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Transcript file exceeds the 10MB upload limit"}

@@ -253,14 +253,20 @@ Phase 3 guardrails implemented:
 - Retrieved content sanitization before prompting or extraction
 - `POST /agent/query` API endpoint with in-memory local session state
 
-## Phase 4 Next Work
+## Phase 4 Current Status
 
-- Add API key creation and bcrypt hashing.
-- Protect endpoints with workspace-scoped API-key auth.
-- Add `POST /upload` with MIME checks and 10MB file-size validation.
-- Persist audit logs and session memory instead of keeping agent session state
-  in process memory.
-- Add security tests for auth, file upload validation, XSS, and oversized files.
+Phase 4 is in progress:
+- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes in local memory.
+- `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` require `X-API-Key`.
+- `POST /upload` validates transcript MIME type, extension, empty files, and the 10MB upload limit.
+- CORS is deny-by-default unless `ALLOWED_ORIGINS` is set.
+- Supabase schema includes RLS-enabled `api_keys` and `audit_logs` tables.
+- Tests cover auth creation, missing keys, cross-workspace rejection, upload validation, and oversized files.
+
+Remaining Phase 4 hardening:
+- Persist API-key hashes in Supabase instead of local process memory.
+- Persist audit logs and session memory instead of keeping agent session state in process memory.
+- Add broader security tests for XSS and auth edge cases.
 
 ## Learning Goals
 - Understand and implement RAG from scratch, not just use a library

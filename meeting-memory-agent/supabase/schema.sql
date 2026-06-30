@@ -71,6 +71,38 @@ $$;
 -- WHY THIS MATTERS: Multi-tenant data must not be readable across workspaces.
 alter table public.transcript_chunks enable row level security;
 
+-- WHAT THIS DOES: Stores hashed API keys for workspace-scoped backend authentication.
+-- WHY THIS MATTERS: Phase 4 auth must never persist plaintext API keys.
+create table if not exists public.api_keys (
+    id uuid primary key default gen_random_uuid(),
+    workspace_id text not null,
+    key_id text not null unique,
+    key_hash text not null check (length(key_hash) > 0),
+    created_at timestamptz not null default now(),
+    revoked_at timestamptz
+);
+
+create index if not exists api_keys_workspace_idx
+on public.api_keys (workspace_id);
+
+alter table public.api_keys enable row level security;
+
+-- WHAT THIS DOES: Stores a safe audit trail for user queries and agent tool calls.
+-- WHY THIS MATTERS: Teams need traceability without logging full private transcript content.
+create table if not exists public.audit_logs (
+    id uuid primary key default gen_random_uuid(),
+    workspace_id text not null,
+    session_id text,
+    event_type text not null,
+    metadata jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists audit_logs_workspace_created_idx
+on public.audit_logs (workspace_id, created_at desc);
+
+alter table public.audit_logs enable row level security;
+
 -- Phase 1 note:
 -- No public anon policies are added here. With RLS enabled, direct anon-client reads/writes are blocked.
 -- Use server-side code with a tightly protected Supabase service-role key for ingestion, or add workspace

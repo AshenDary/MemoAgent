@@ -17,6 +17,7 @@ def ingest_transcript_file(
     file_path: str | Path,
     workspace_id: str,
     metadata: dict[str, Any] | None = None,
+    source_filename: str | None = None,
 ) -> list[TranscriptChunk]:
     """Ingest one transcript file into Supabase pgvector storage."""
     path = Path(file_path)
@@ -25,7 +26,7 @@ def ingest_transcript_file(
 
     return embed_and_store_transcript(
         text=cleaned_text,
-        filename=path.name,
+        filename=source_filename or path.name,
         workspace_id=workspace_id,
         metadata=metadata,
     )
