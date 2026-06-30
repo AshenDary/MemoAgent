@@ -21,12 +21,13 @@ query their entire meeting history using natural language, getting grounded, cit
 | Layer | Tool | Purpose |
 |---|---|---|
 | LLM | Groq API (Llama 3.3 70B) | Answer generation |
-| Embeddings | Gemini API (text-embedding-004) | Convert text to vectors |
+| Embeddings | Gemini API (`models/gemini-embedding-001`, 768 dimensions by default) | Convert text to vectors |
 | Vector DB | Supabase pgvector | Store + search embeddings |
 | Agent framework | LangGraph | Agentic tool-calling logic |
 | Backend | FastAPI (Python) | REST API endpoints |
 | Frontend | Next.js | Chat UI |
 | Hosting | Railway (backend) + Vercel (frontend) | Free deployment |
+| Containerization | Docker | Build and run using the included Dockerfile |
 | PII detection | spaCy (en_core_web_sm) | Detect names, emails in transcripts |
 | Sanitization | bleach + pydantic | Strip XSS, validate inputs |
 | Scheduling | APScheduler | Optional: auto-ingest |
@@ -94,7 +95,7 @@ Tasks:
 - sanitizer.py: strip timestamps [00:01:23], speaker labels "John:", filler words
 - PII scrubbing: mask emails, phone numbers, names using spaCy NER
 - Chunker: LangChain RecursiveCharacterTextSplitter (500 tokens, 50 overlap)
-- Embedder: call Gemini text-embedding-004, store result in Supabase
+- Embedder: call configured Gemini embedding model, store 768-dimensional vectors in Supabase
 - Deduplication: hash transcript URL/filename before storing; skip if exists
 - Input validation: reject files > 10MB, non-text formats, sanitize content
 
@@ -183,6 +184,7 @@ GaaS architecture: each tenant has isolated vector namespace in Supabase, scoped
 3. **Validate all external input**: scraped/uploaded content is untrusted
 4. **Hash API keys**: bcrypt before storing, compare hash not plaintext
 5. **Sanitize before LLM**: strip injected instructions from retrieved content
+6. **Use service-role keys server-side**: keep anon keys for client reads and service-role keys for ingestion and maintenance scripts under RLS.
 
 ---
 
@@ -193,14 +195,78 @@ GROQ_API_KEY=
 GEMINI_API_KEY=
 SUPABASE_URL=
 SUPABASE_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
 SECRET_KEY=          # for signing tokens
 ```
+
+## Docker
+
+- A Dockerfile is included in the repository (meeting-memory-agent/Dockerfile) so you can run the service in a container.
+- Example: build and run the image locally (assumes Docker is installed):
+
+```bash
+# Build the image from the project root
+docker build -f meeting-memory-agent/Dockerfile -t memoagent:latest .
+
+# Run with environment file, expose port 8000, and mount local data folder
+docker run --rm --env-file .env -p 8000:8000 \
+  -v $(pwd)/meeting-memory-agent/data:/app/meeting-memory-agent/data \
+  memoagent:latest
+```
+
+Notes:
+- The container expects the same environment variables as the local setup. Use `--env-file .env` or `-e` flags to pass them.
+- Adjust the `-p` port mapping if your FastAPI process is configured for a different port.
 
 ---
 
 ## Current Status
-Starting Phase 1. Setting up project structure, installing dependencies,
-creating .env file, getting API keys from Groq + Gemini + Supabase.
+Phase 1 verified locally. Transcript loading, sanitization, PII masking,
+chunking, embedding record preparation, Supabase persistence helpers, and
+Phase 1 tests are implemented and passing.
+
+Phase 2 is complete in local mocked tests. The RAG core includes query embedding,
+tenant-scoped Supabase pgvector retrieval, retrieved-content sanitization, Groq
+answer generation with source-style citation labels, weak-evidence "I do not
+know" fallback behavior, retrieval audit logging, and tests for `top_k=3` vs
+`top_k=10`. The API has a Phase 2 `POST /query` endpoint plus `GET /meetings`,
+and the Supabase schema enables RLS without adding broad anon policies.
+
+Phase 3 is complete for the local backend. LangGraph now uses a routed agent flow:
+
+```text
+User message -> deterministic router -> bounded tool execution -> response synthesis
+```
+
+Implemented tools:
+- `search_transcripts(query)`
+- `summarize_meeting(meeting_id)`
+- `extract_decisions(query)`
+- `find_action_items(query)`
+- `list_meetings(date_range)`
+- `answer_from_memory(question)`
+
+Phase 3 guardrails implemented:
+- Max 20 tool calls per session
+- Short conversation history in graph state
+- Loguru audit logs for tool calls
+- Retrieved content sanitization before prompting or extraction
+- `POST /agent/query` API endpoint with in-memory local session state
+
+## Phase 4 Current Status
+
+Phase 4 is in progress:
+- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes in local memory.
+- `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` require `X-API-Key`.
+- `POST /upload` validates transcript MIME type, extension, empty files, and the 10MB upload limit.
+- CORS is deny-by-default unless `ALLOWED_ORIGINS` is set.
+- Supabase schema includes RLS-enabled `api_keys` and `audit_logs` tables.
+- Tests cover auth creation, missing keys, cross-workspace rejection, upload validation, and oversized files.
+
+Remaining Phase 4 hardening:
+- Persist API-key hashes in Supabase instead of local process memory.
+- Persist audit logs and session memory instead of keeping agent session state in process memory.
+- Add broader security tests for XSS and auth edge cases.
 
 ## Learning Goals
 - Understand and implement RAG from scratch, not just use a library

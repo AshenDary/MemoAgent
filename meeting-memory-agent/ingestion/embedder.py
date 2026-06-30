@@ -17,7 +17,8 @@ from supabase import Client, create_client
 
 DEFAULT_CHUNK_SIZE_TOKENS = 500
 DEFAULT_CHUNK_OVERLAP_TOKENS = 50
-GEMINI_EMBEDDING_MODEL = "models/text-embedding-004"
+DEFAULT_GEMINI_EMBEDDING_MODEL = "models/gemini-embedding-001"
+DEFAULT_EMBEDDING_DIMENSIONS = 768
 TRANSCRIPT_CHUNKS_TABLE = "transcript_chunks"
 
 
@@ -66,18 +67,23 @@ def chunk_text(
     return [chunk.strip() for chunk in splitter.split_text(cleaned_text) if chunk.strip()]
 
 
-# WHAT THIS DOES: Sends one text chunk to Gemini and gets back a vector embedding.
-# WHY THIS MATTERS: The vector is what lets pgvector compare transcript meaning during search.
+# WHAT THIS DOES: Sends one text chunk to Gemini and gets back a fixed-size vector embedding.
+# WHY THIS WAY: The model and dimensions are configurable, but default to the live-supported Gemini
+# embedding model and the 768 dimensions declared in the Supabase pgvector schema.
+# SECURITY NOTE: The API key is read from `.env`; transcript text is already sanitized before ingestion.
 def embed_text(text: str, task_type: str = "retrieval_document") -> list[float]:
-    """Embed text with Gemini text-embedding-004."""
+    """Embed text with the configured Gemini embedding model."""
     api_key = _required_env("GEMINI_API_KEY")
     genai.configure(api_key=api_key)
+    model = _optional_env("GEMINI_EMBEDDING_MODEL", DEFAULT_GEMINI_EMBEDDING_MODEL)
+    dimensions = _embedding_dimensions()
 
     try:
         response = genai.embed_content(
-            model=GEMINI_EMBEDDING_MODEL,
+            model=model,
             content=text,
             task_type=task_type,
+            output_dimensionality=dimensions,
         )
     except Exception as exc:
         logger.exception("Gemini embedding request failed")
@@ -87,7 +93,13 @@ def embed_text(text: str, task_type: str = "retrieval_document") -> list[float]:
     if not isinstance(embedding, list) or not embedding:
         raise RuntimeError("Gemini embedding response did not include an embedding")
 
-    return [float(value) for value in embedding]
+    normalized_embedding = [float(value) for value in embedding]
+    if len(normalized_embedding) != dimensions:
+        raise RuntimeError(
+            f"Gemini embedding returned {len(normalized_embedding)} dimensions; expected {dimensions}"
+        )
+
+    return normalized_embedding
 
 
 # WHAT THIS DOES: Embeds every chunk from the transcript.
@@ -210,11 +222,12 @@ def embed_and_store_transcript(
 
 
 # WHAT THIS DOES: Creates the Supabase client using values from `.env`.
-# WHY THIS MATTERS: API keys stay outside the source code and can be changed per environment.
+# WHY THIS MATTERS: Server-side ingestion should prefer a service-role key so RLS-protected writes work,
+# while still allowing anon fallback for read-only or local setups.
 def get_supabase_client() -> Client:
     """Create a Supabase client from environment variables."""
     url = _required_env("SUPABASE_URL")
-    key = _required_env("SUPABASE_KEY")
+    key = _optional_env("SUPABASE_SERVICE_ROLE_KEY", _required_env("SUPABASE_KEY"))
     return create_client(url, key)
 
 
@@ -234,6 +247,32 @@ def _required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+# WHAT THIS DOES: Reads an optional environment variable with a safe default.
+# WHY THIS WAY: Model settings can change by environment without hardcoding project-specific values.
+# SECURITY NOTE: This helper does not print env values, so secrets stay out of logs.
+def _optional_env(name: str, default: str) -> str:
+    """Read an optional environment variable after loading local .env values."""
+    load_dotenv()
+    return os.getenv(name, default)
+
+
+# WHAT THIS DOES: Reads and validates the embedding dimension setting.
+# WHY THIS WAY: Supabase pgvector columns require a fixed vector length, so bad config should fail early.
+# SECURITY NOTE: The value is configuration, not user input, but validation still prevents unsafe surprises.
+def _embedding_dimensions() -> int:
+    """Return the configured embedding dimensions."""
+    raw_value = _optional_env("GEMINI_EMBEDDING_DIMENSIONS", str(DEFAULT_EMBEDDING_DIMENSIONS))
+    try:
+        dimensions = int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError("GEMINI_EMBEDDING_DIMENSIONS must be an integer") from exc
+
+    if dimensions <= 0:
+        raise RuntimeError("GEMINI_EMBEDDING_DIMENSIONS must be greater than zero")
+
+    return dimensions
 
 
 # WHAT THIS DOES: Estimates token count by counting words.

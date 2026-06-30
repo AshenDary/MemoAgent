@@ -66,5 +66,5 @@ def _load_spacy_model() -> object | None:
         import spacy
 
         return spacy.load("en_core_web_sm")
-    except OSError:
+    except (ModuleNotFoundError, OSError):
         return None

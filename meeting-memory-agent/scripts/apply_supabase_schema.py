@@ -29,16 +29,24 @@ def main() -> int:
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
 
     try:
-        with psycopg.connect(db_url) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(schema_sql)
-            connection.commit()
+        apply_schema(db_url=db_url, schema_sql=schema_sql)
     except Exception as exc:
         logger.error("Failed to apply Supabase schema: {}", exc)
         return 1
 
     logger.info("Supabase schema applied successfully")
     return 0
+
+
+# WHAT THIS DOES: Opens a Postgres connection and executes the local schema SQL.
+# WHY THIS WAY: The script logic is easier to test when the actual connection work lives in one helper.
+# SECURITY NOTE: The caller still supplies the DB URL from `.env`; this helper never logs the password.
+def apply_schema(*, db_url: str, schema_sql: str) -> None:
+    """Apply the schema SQL to a Postgres database."""
+    with psycopg.connect(db_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(schema_sql)
+        connection.commit()
 
 
 if __name__ == "__main__":

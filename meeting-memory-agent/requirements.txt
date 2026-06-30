@@ -20,7 +20,9 @@ httpx
 
 # Security
 bleach
+bcrypt
 pydantic
+python-multipart
 
 # Environment & Logging
 python-dotenv
