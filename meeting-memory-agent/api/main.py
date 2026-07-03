@@ -18,6 +18,7 @@ from ingestion.transcript_loader import ALLOWED_TRANSCRIPT_EXTENSIONS, MAX_TRANS
 from retrieval.retriever import answer_question, list_meetings
 from security.auth import StoredAPIKey, create_api_key_record, model_to_dict, verify_api_key
 from security.sanitize import sanitize_text
+from security.stores import build_security_stores
 
 app = FastAPI(title="Meeting Memory Agent API")
 app.add_middleware(
@@ -28,8 +29,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 _AGENT_GRAPH = build_graph()
-_AGENT_SESSIONS: dict[str, dict[str, Any]] = {}
-_API_KEY_STORE: dict[str, StoredAPIKey] = {}
+_API_KEY_STORE, _AGENT_SESSION_STORE, _AUDIT_LOG_STORE = build_security_stores()
 ALLOWED_UPLOAD_MIME_TYPES = {
     "text/plain",
     "text/vtt",
@@ -121,7 +121,7 @@ def health_check() -> dict[str, str]:
 
 # WHAT THIS DOES: Creates a workspace API key and stores only its bcrypt hash.
 # WHY THIS WAY: The user sees the plaintext key once, while future requests verify against the hash.
-# SECURITY NOTE: This is an in-memory Phase 4 implementation; production should persist hashes in Supabase.
+# SECURITY NOTE: The plaintext key is returned once; only the bcrypt hash is stored.
 @app.post("/auth/create-key", response_model=CreateAPIKeyResponse)
 def create_workspace_api_key(request: CreateAPIKeyRequest) -> CreateAPIKeyResponse:
     """Create a new API key for one workspace."""
@@ -130,7 +130,16 @@ def create_workspace_api_key(request: CreateAPIKeyRequest) -> CreateAPIKeyRespon
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    _API_KEY_STORE[record.key_id] = record
+    try:
+        _API_KEY_STORE.save(record)
+        _write_audit_event(
+            workspace_id=record.workspace_id,
+            event_type="api_key_created",
+            metadata={"key_id": record.key_id},
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     logger.info("Created API key: workspace_id={} key_id={}", record.workspace_id, record.key_id)
     return CreateAPIKeyResponse(
         workspace_id=record.workspace_id,
@@ -155,6 +164,11 @@ def query_meeting_memory(
         raise HTTPException(status_code=422, detail="workspace_id and question are required")
 
     _require_api_key(workspace_id=safe_workspace_id, api_key=x_api_key)
+    _write_audit_event(
+        workspace_id=safe_workspace_id,
+        event_type="query_requested",
+        metadata={"question_length": len(safe_question), "top_k": request.top_k},
+    )
 
     try:
         result = answer_question(
@@ -190,6 +204,11 @@ def get_meetings(
         raise HTTPException(status_code=422, detail="workspace_id is required")
 
     _require_api_key(workspace_id=safe_workspace_id, api_key=x_api_key)
+    _write_audit_event(
+        workspace_id=safe_workspace_id,
+        event_type="meetings_listed",
+        metadata={},
+    )
 
     try:
         meetings = list_meetings(workspace_id=safe_workspace_id)
@@ -223,8 +242,10 @@ def query_agent(
 
     _require_api_key(workspace_id=safe_workspace_id, api_key=x_api_key)
 
-    session_key = _session_key(workspace_id=safe_workspace_id, session_id=safe_session_id)
-    prior_state = _AGENT_SESSIONS.get(session_key, {})
+    prior_state = _AGENT_SESSION_STORE.get(
+        workspace_id=safe_workspace_id,
+        session_id=safe_session_id,
+    )
     graph_input: dict[str, Any] = {
         "workspace_id": safe_workspace_id,
         "question": safe_message,
@@ -254,10 +275,22 @@ def query_agent(
         logger.exception("Agent query failed")
         raise HTTPException(status_code=500, detail="Unable to answer agent query") from exc
 
-    _AGENT_SESSIONS[session_key] = {
-        "tool_call_count": int(result.get("tool_call_count", 0)),
-        "conversation_history": list(result.get("conversation_history", [])),
-    }
+    _AGENT_SESSION_STORE.save(
+        workspace_id=safe_workspace_id,
+        session_id=safe_session_id,
+        tool_call_count=int(result.get("tool_call_count", 0)),
+        conversation_history=list(result.get("conversation_history", [])),
+    )
+    _write_audit_event(
+        workspace_id=safe_workspace_id,
+        session_id=safe_session_id,
+        event_type="agent_query_completed",
+        metadata={
+            "selected_tool": str(result.get("selected_tool", "answer_from_memory")),
+            "message_length": len(safe_message),
+            "tool_call_count": int(result.get("tool_call_count", 0)),
+        },
+    )
 
     return AgentQueryResponse(
         session_id=safe_session_id,
@@ -315,6 +348,16 @@ async def upload_transcript(
         if temp_path:
             Path(temp_path).unlink(missing_ok=True)
 
+    _write_audit_event(
+        workspace_id=safe_workspace_id,
+        event_type="transcript_uploaded",
+        metadata={
+            "filename": safe_filename,
+            "chunks_stored": len(records),
+            "file_size_bytes": len(content),
+        },
+    )
+
     return UploadResponse(
         workspace_id=safe_workspace_id,
         filename=safe_filename,
@@ -325,23 +368,42 @@ async def upload_transcript(
     )
 
 
-def _session_key(*, workspace_id: str, session_id: str) -> str:
-    """Build a workspace-scoped session key for the in-memory dev session store."""
-    return f"{workspace_id}:{session_id}"
-
-
 def _require_api_key(*, workspace_id: str, api_key: Optional[str]) -> StoredAPIKey:
     """Authorize one API key for the requested workspace."""
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing API key")
 
-    for record in _API_KEY_STORE.values():
+    try:
+        records = _API_KEY_STORE.find_active_by_workspace(workspace_id=workspace_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    for record in records:
         if record.workspace_id != workspace_id:
             continue
         if verify_api_key(api_key=api_key, stored_hash=record.key_hash):
             return record
 
     raise HTTPException(status_code=403, detail="Invalid API key for workspace")
+
+
+def _write_audit_event(
+    *,
+    workspace_id: str,
+    event_type: str,
+    session_id: Optional[str] = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Write an audit event without leaking request bodies or transcript content."""
+    try:
+        _AUDIT_LOG_STORE.write(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            event_type=event_type,
+            metadata=metadata or {},
+        )
+    except RuntimeError:
+        logger.exception("Audit logging failed")
 
 
 def _validate_upload_metadata(file: UploadFile) -> str:

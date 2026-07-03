@@ -48,8 +48,10 @@ meeting-memory-agent/
 |   |-- graph.py                 # LangGraph agent definition
 |   `-- tools.py                 # tools the agent can call
 |-- api/
-|   `-- main.py                  # FastAPI: POST /upload, POST /query, GET /meetings
+|   `-- main.py                  # FastAPI: POST /auth/create-key, /upload, /query, /agent/query, /meetings
 |-- security/
+|   |-- auth.py                  # hashed API keys and verification helpers
+|   |-- stores.py                # API key, session, and audit-log persistence
 |   `-- sanitize.py              # input validation, injection prevention
 |-- tests/
 |   `-- test_sanitizer.py        # security tests
@@ -251,22 +253,23 @@ Phase 3 guardrails implemented:
 - Short conversation history in graph state
 - Loguru audit logs for tool calls
 - Retrieved content sanitization before prompting or extraction
-- `POST /agent/query` API endpoint with in-memory local session state
+- `POST /agent/query` API endpoint with persisted per-session state through the security store layer
 
 ## Phase 4 Current Status
 
-Phase 4 is in progress:
-- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes in local memory.
-- `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` require `X-API-Key`.
-- `POST /upload` validates transcript MIME type, extension, empty files, and the 10MB upload limit.
-- CORS is deny-by-default unless `ALLOWED_ORIGINS` is set.
-- Supabase schema includes RLS-enabled `api_keys` and `audit_logs` tables.
-- Tests cover auth creation, missing keys, cross-workspace rejection, upload validation, and oversized files.
+Phase 4 is now partially implemented in the backend and mostly in place locally:
+- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes.
+- `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` all require `X-API-Key`.
+- `POST /upload` validates transcript MIME type, extension, empty files, and the 10MB upload limit before ingestion.
+- `security/stores.py` now provides pluggable persistence for API keys, agent session state, and audit logs, with Supabase-backed implementations and an in-memory fallback for local runs.
+- `api/main.py` wires the stores into request handling so agent session state and audit events are saved after requests.
+- The Supabase schema includes RLS-enabled `api_keys`, `agent_sessions`, and `audit_logs` tables.
+- Tests cover auth creation, missing keys, cross-workspace rejection, upload validation, oversized files, and agent-session persistence behavior.
 
 Remaining Phase 4 hardening:
-- Persist API-key hashes in Supabase instead of local process memory.
-- Persist audit logs and session memory instead of keeping agent session state in process memory.
+- Verify Supabase-backed stores end-to-end with live credentials instead of only local fallback and mocked tests.
 - Add broader security tests for XSS and auth edge cases.
+- Add any missing RLS policies once multi-tenant workspace membership is finalized.
 
 ## Learning Goals
 - Understand and implement RAG from scratch, not just use a library
