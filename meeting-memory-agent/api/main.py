@@ -30,6 +30,7 @@ app.add_middleware(
 )
 _AGENT_GRAPH = build_graph()
 _API_KEY_STORE, _AGENT_SESSION_STORE, _AUDIT_LOG_STORE = build_security_stores()
+_AGENT_SESSIONS = _AGENT_SESSION_STORE
 ALLOWED_UPLOAD_MIME_TYPES = {
     "text/plain",
     "text/vtt",

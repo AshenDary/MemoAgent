@@ -75,7 +75,7 @@ class InMemoryAPIKeyStore:
         return [
             record
             for record in self.records.values()
-            if record.workspace_id == workspace_id
+            if record.workspace_id == workspace_id and record.revoked_at is None
         ]
 
     def clear(self) -> None:
@@ -165,7 +165,7 @@ class SupabaseAPIKeyStore:
         try:
             response = (
                 self.client.table(API_KEYS_TABLE)
-                .select("workspace_id, key_id, key_hash")
+                .select("workspace_id, key_id, key_hash, revoked_at")
                 .eq("workspace_id", workspace_id)
                 .is_("revoked_at", "null")
                 .execute()
@@ -179,6 +179,7 @@ class SupabaseAPIKeyStore:
                 workspace_id=str(row["workspace_id"]),
                 key_id=str(row["key_id"]),
                 key_hash=str(row["key_hash"]),
+                revoked_at=row.get("revoked_at"),
             )
             for row in response.data or []
         ]
@@ -276,10 +277,13 @@ def build_security_stores() -> tuple[APIKeyStore, AgentSessionStore, AuditLogSto
     if os.getenv("USE_IN_MEMORY_SECURITY_STORE", "").lower() in {"1", "true", "yes"}:
         return InMemoryAPIKeyStore(), InMemoryAgentSessionStore(), InMemoryAuditLogStore()
 
-    if os.getenv("SUPABASE_URL") and (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
-    ):
+    if os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
         return SupabaseAPIKeyStore(), SupabaseAgentSessionStore(), SupabaseAuditLogStore()
+
+    if os.getenv("SUPABASE_URL"):
+        logger.warning(
+            "SUPABASE_URL is set but SUPABASE_SERVICE_ROLE_KEY is missing; using in-memory security stores"
+        )
 
     return InMemoryAPIKeyStore(), InMemoryAgentSessionStore(), InMemoryAuditLogStore()
 

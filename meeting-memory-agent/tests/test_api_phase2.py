@@ -2,17 +2,34 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 import api.main as api_main
 from api.main import app
+from security.auth import StoredAPIKey
+from security.stores import InMemoryAPIKeyStore, InMemoryAgentSessionStore, InMemoryAuditLogStore
 from ingestion.embedder import TranscriptChunk
 from retrieval.retriever import MeetingSummary, RAGAnswer, RetrievedChunk
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _use_in_memory_stores(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force in-memory security stores for all tests."""
+    monkeypatch.setenv("USE_IN_MEMORY_SECURITY_STORE", "1")
+    in_mem_api_key = InMemoryAPIKeyStore()
+    in_mem_session = InMemoryAgentSessionStore()
+    in_mem_audit = InMemoryAuditLogStore()
+    monkeypatch.setattr(api_main, "_API_KEY_STORE", in_mem_api_key)
+    monkeypatch.setattr(api_main, "_AGENT_SESSION_STORE", in_mem_session)
+    monkeypatch.setattr(api_main, "_AUDIT_LOG_STORE", in_mem_audit)
+    monkeypatch.setattr(api_main, "_AGENT_SESSIONS", in_mem_session)
 
 
 def _create_test_api_key(workspace_id: str = "workspace_123") -> str:
@@ -78,6 +95,35 @@ def test_query_endpoint_returns_rag_answer(monkeypatch: Any) -> None:
     assert body["question"] == "Was the launch approved?"
     assert body["citations"] == ["weekly-sync.txt#0"]
     assert body["chunks"][0]["filename"] == "weekly-sync.txt"
+
+
+def test_query_endpoint_sanitizes_xss_input(monkeypatch: Any) -> None:
+    api_key = _create_test_api_key()
+    captured: dict[str, Any] = {}
+
+    def fake_answer_question(*, question: str, workspace_id: str, top_k: int) -> RAGAnswer:
+        captured["question"] = question
+        return RAGAnswer(
+            question=question,
+            answer="ok",
+            citations=[],
+            chunks=[],
+        )
+
+    monkeypatch.setattr(api_main, "answer_question", fake_answer_question)
+
+    response = client.post(
+        "/query",
+        headers={"X-API-Key": api_key},
+        json={
+            "workspace_id": "workspace_123",
+            "question": "<script>alert('xss')</script> What was approved?",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "<script>" not in str(captured["question"])
+    assert "What was approved?" in str(captured["question"])
 
 
 def test_query_endpoint_hides_internal_errors(monkeypatch: Any) -> None:
@@ -259,7 +305,7 @@ def test_create_key_returns_plaintext_once_and_stores_hash() -> None:
     body = response.json()
     assert response.status_code == 200
     assert body["api_key"].startswith("mma_")
-    stored = api_main._API_KEY_STORE[body["key_id"]]
+    stored = api_main._API_KEY_STORE.records[body["key_id"]]
     assert stored.workspace_id == "workspace_123"
     assert stored.key_hash != body["api_key"]
 
@@ -271,6 +317,40 @@ def test_protected_endpoint_rejects_missing_api_key() -> None:
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Missing API key"}
+
+
+def test_protected_endpoint_rejects_malformed_api_key() -> None:
+    _create_test_api_key()
+
+    response = client.get(
+        "/meetings",
+        headers={"X-API-Key": "not-a-real-key"},
+        params={"workspace_id": "workspace_123"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Invalid API key for workspace"}
+
+
+def test_protected_endpoint_rejects_revoked_api_key() -> None:
+    api_key = _create_test_api_key()
+    key_id = next(iter(api_main._API_KEY_STORE.records))
+    stored = api_main._API_KEY_STORE.records[key_id]
+    api_main._API_KEY_STORE.records[key_id] = StoredAPIKey(
+        key_id=stored.key_id,
+        workspace_id=stored.workspace_id,
+        key_hash=stored.key_hash,
+        revoked_at="2026-01-01T00:00:00Z",
+    )
+
+    response = client.get(
+        "/meetings",
+        headers={"X-API-Key": api_key},
+        params={"workspace_id": "workspace_123"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Invalid API key for workspace"}
 
 
 def test_protected_endpoint_rejects_cross_workspace_key() -> None:
