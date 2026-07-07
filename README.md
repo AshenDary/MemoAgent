@@ -91,8 +91,10 @@ Notes:
 ## Project status
 
 - Phase 1 (Ingestion + Sanitization) — verified locally. Transcript loading, sanitization, PII masking, chunking, embedding record preparation, Supabase persistence helpers, and Phase 1 tests are passing.
-- Phase 2 (RAG Core) — in progress. The repo now has tenant-scoped pgvector retrieval, Groq answer generation with citation prompting, a minimal LangGraph RAG entry point, a `/query` API endpoint, a live RAG check script, and mocked tests around the RAG path.
-- Phase 3 (Agent layer) and Phase 4 (API + security hardening) are still planned in the repo roadmap.
+- Phase 2 (RAG Core) — complete in local mocked tests. The repo has tenant-scoped pgvector retrieval, Groq answer generation with citation prompting, a LangGraph RAG entry point, a `/query` API endpoint, a live RAG check script, and tests around the RAG path.
+- Phase 3 (Agent layer) — complete in the local backend. The LangGraph flow includes routed tool execution, session memory, and audit logging.
+- Phase 4 (API + security hardening) — complete locally and covered by tests. API-key auth, Supabase-backed stores, XSS sanitization, upload validation, revoked-key handling, and workspace-scoped persistence are implemented.
+- Phase 5 (Frontend + deployment) — next up. The repo still needs a Next.js UI scaffold plus Railway/Vercel deployment wiring.
 
 ## Security notes
 

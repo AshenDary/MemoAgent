@@ -1,0 +1,268 @@
+:root {
+  --bg: #08111f;
+  --bg-soft: #0f1c32;
+  --surface: rgba(12, 20, 38, 0.86);
+  --surface-strong: #15223d;
+  --border: rgba(182, 202, 255, 0.18);
+  --text: #edf2ff;
+  --muted: #a8b7d8;
+  --accent: #8cf0c2;
+  --accent-strong: #5ce0b3;
+  --shadow: 0 28px 80px rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(92, 224, 179, 0.18), transparent 32%),
+    radial-gradient(circle at top right, rgba(135, 137, 255, 0.14), transparent 28%),
+    linear-gradient(180deg, #06111e 0%, #0a1324 42%, #050b16 100%);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 40px 0 56px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 24px;
+  align-items: stretch;
+  margin-bottom: 24px;
+}
+
+.hero-copy,
+.hero-panel,
+.card {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow);
+}
+
+.hero-copy {
+  border-radius: 28px;
+  padding: 32px;
+}
+
+.hero-panel {
+  border-radius: 28px;
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.eyebrow {
+  margin: 0 0 14px;
+  color: var(--accent);
+  font-family: var(--font-mono), monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.78rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.5rem, 5vw, 4.75rem);
+  line-height: 0.96;
+  letter-spacing: -0.05em;
+  max-width: 12ch;
+}
+
+.lede {
+  max-width: 58ch;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.7;
+  margin: 18px 0 0;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.stat-pill,
+.panel-card {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.stat-pill {
+  padding: 10px 14px;
+  color: var(--text);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.82rem;
+}
+
+.panel-card {
+  padding: 18px;
+}
+
+.panel-card span {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.panel-card strong {
+  font-size: 0.98rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: 1fr 0.9fr;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.card {
+  border-radius: 24px;
+  padding: 24px;
+}
+
+.card-heading h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.card-heading p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin-top: 18px;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(3, 8, 18, 0.55);
+  color: var(--text);
+  padding: 14px 16px;
+  outline: none;
+}
+
+input:focus,
+textarea:focus {
+  border-color: rgba(140, 240, 194, 0.6);
+  box-shadow: 0 0 0 4px rgba(140, 240, 194, 0.12);
+}
+
+button {
+  margin-top: 20px;
+  border: 0;
+  border-radius: 16px;
+  padding: 14px 18px;
+  color: #04131b;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.transcript-card {
+  min-height: 340px;
+}
+
+.message-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.message {
+  border-radius: 18px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.message.user {
+  background: rgba(140, 240, 194, 0.08);
+}
+
+.message span {
+  display: inline-block;
+  font-family: var(--font-mono), monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.message p {
+  margin: 0;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.upload-note {
+  color: var(--muted);
+  margin: 14px 0 0;
+}
+
+@media (max-width: 920px) {
+  .hero,
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    width: min(100% - 20px, 1180px);
+    padding: 18px 0 36px;
+  }
+
+  .hero-copy,
+  .hero-panel,
+  .card {
+    border-radius: 20px;
+    padding: 18px;
+  }
+
+  h1 {
+    font-size: clamp(2.2rem, 11vw, 3.4rem);
+  }
+}

@@ -257,21 +257,32 @@ Phase 3 guardrails implemented:
 
 ## Phase 4 Current Status
 
-Phase 4 is now partially implemented in the backend and mostly in place locally:
+Phase 4 is complete in the local workspace and validated with tests:
 - `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes.
 - `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` all require `X-API-Key`.
 - `POST /upload` validates transcript MIME type, extension, empty files, and the 10MB upload limit before ingestion.
-- `security/stores.py` now provides pluggable persistence for API keys, agent session state, and audit logs, with Supabase-backed implementations and an in-memory fallback for local runs.
+- `security/stores.py` provides pluggable persistence for API keys, agent session state, and audit logs, with Supabase-backed implementations and an in-memory fallback for local runs.
 - `api/main.py` wires the stores into request handling so agent session state and audit events are saved after requests.
-- The Supabase schema file includes RLS-enabled `api_keys`, `agent_sessions`, and `audit_logs` tables.
-- Tests cover auth creation, missing keys, cross-workspace rejection, upload validation, oversized files, and agent-session persistence behavior.
-- Supabase REST connectivity is working with the current workspace credentials, but the direct Postgres schema script cannot resolve the DB host from this environment, so the live schema push is still pending.
+- The Supabase schema includes RLS-enabled `api_keys`, `agent_sessions`, and `audit_logs` tables plus workspace-scoped policies.
+- Tests now cover auth creation, missing keys, cross-workspace rejection, upload validation, oversized files, XSS sanitization, revoked-key handling, and agent-session persistence behavior.
 
-Remaining Phase 4 hardening:
+Validated outcomes:
+- Local pytest suite passes on Python 3.9.
+- Live Supabase verification scripts are available for schema and store CRUD checks.
+
+Remaining live-deployment tasks:
 - Push `supabase/schema.sql` to the real Supabase project using the SQL Editor or a reachable direct Postgres URL.
 - Verify Supabase-backed stores end-to-end with live credentials instead of only local fallback and mocked tests.
-- Add broader security tests for XSS and auth edge cases.
-- Add any missing RLS policies once multi-tenant workspace membership is finalized.
+
+## Phase 5 Current Status
+
+Phase 5 is the next implementation target. The repo still lacks the frontend scaffold, so the next work is to build the Next.js chat UI and deployment wiring.
+
+Planned Phase 5 work:
+- Create the Next.js frontend shell for chat, upload, and citations.
+- Wire the frontend to the FastAPI endpoints with workspace-scoped API keys.
+- Add a deployment path for Railway (backend) and Vercel (frontend).
+- Update the README with the live architecture and setup flow.
 
 ## Learning Goals
 - Understand and implement RAG from scratch, not just use a library
