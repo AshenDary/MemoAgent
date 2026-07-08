@@ -93,8 +93,21 @@ Notes:
 - Phase 1 (Ingestion + Sanitization) — verified locally. Transcript loading, sanitization, PII masking, chunking, embedding record preparation, Supabase persistence helpers, and Phase 1 tests are passing.
 - Phase 2 (RAG Core) — complete in local mocked tests. The repo has tenant-scoped pgvector retrieval, Groq answer generation with citation prompting, a LangGraph RAG entry point, a `/query` API endpoint, a live RAG check script, and tests around the RAG path.
 - Phase 3 (Agent layer) — complete in the local backend. The LangGraph flow includes routed tool execution, session memory, and audit logging.
-- Phase 4 (API + security hardening) — complete locally and covered by tests. API-key auth, Supabase-backed stores, XSS sanitization, upload validation, revoked-key handling, and workspace-scoped persistence are implemented.
-- Phase 5 (Frontend + deployment) — next up. The repo still needs a Next.js UI scaffold plus Railway/Vercel deployment wiring.
+- Phase 4 (API + security hardening) — complete locally and covered by tests. API-key auth, request-level rate limiting, Supabase-backed stores, XSS sanitization, upload validation, revoked-key handling, and workspace-scoped persistence are implemented.
+- Phase 5 (Frontend + deployment) — implemented locally. The Next.js client now has the dark research-ledger app shell, workspace API-key setup, transcript upload, meeting inventory, one user-friendly memory query flow, clickable citation ledger tabs, responsive mobile sheets, and Vercel/Railway deployment notes in `frontend/README.md`.
+
+## Frontend
+
+Run the Phase 5 UI from `frontend/`:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+Set `API_BASE_URL` in `.env.local` only if the FastAPI backend is not running at `http://127.0.0.1:8000`.
 
 ## Security notes
 

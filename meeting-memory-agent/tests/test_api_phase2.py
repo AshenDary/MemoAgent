@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,12 +12,15 @@ from fastapi.testclient import TestClient
 import api.main as api_main
 from api.main import app
 from security.auth import StoredAPIKey
+from security.rate_limit import RateLimiter
 from security.stores import InMemoryAPIKeyStore, InMemoryAgentSessionStore, InMemoryAuditLogStore
 from ingestion.embedder import TranscriptChunk
+from ingestion.transcript_loader import load_transcript
 from retrieval.retriever import MeetingSummary, RAGAnswer, RetrievedChunk
 
 
 client = TestClient(app)
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +34,7 @@ def _use_in_memory_stores(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(api_main, "_AGENT_SESSION_STORE", in_mem_session)
     monkeypatch.setattr(api_main, "_AUDIT_LOG_STORE", in_mem_audit)
     monkeypatch.setattr(api_main, "_AGENT_SESSIONS", in_mem_session)
+    api_main._RATE_LIMITER.reset()
 
 
 def _create_test_api_key(workspace_id: str = "workspace_123") -> str:
@@ -161,6 +166,39 @@ def test_query_endpoint_validates_top_k_limit() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_query_endpoint_returns_429_when_rate_limited(monkeypatch: Any) -> None:
+    api_key = _create_test_api_key()
+
+    monkeypatch.setattr(api_main, "_RATE_LIMITER", RateLimiter(max_requests=1, window_seconds=60))
+
+    def fake_answer_question(*, question: str, workspace_id: str, top_k: int) -> RAGAnswer:
+        return RAGAnswer(question=question, answer="ok", citations=[], chunks=[])
+
+    monkeypatch.setattr(api_main, "answer_question", fake_answer_question)
+
+    first = client.post(
+        "/query",
+        headers={"X-API-Key": api_key},
+        json={
+            "workspace_id": "workspace_123",
+            "question": "Was the launch approved?",
+        },
+    )
+    second = client.post(
+        "/query",
+        headers={"X-API-Key": api_key},
+        json={
+            "workspace_id": "workspace_123",
+            "question": "Was the launch approved again?",
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert second.json() == {"detail": "Rate limit exceeded. Please try again later."}
+    assert second.headers.get("retry-after") is not None
 
 
 def test_get_meetings_endpoint_returns_meeting_summaries(monkeypatch: Any) -> None:
@@ -411,6 +449,92 @@ def test_upload_endpoint_validates_and_ingests_transcript(monkeypatch: Any) -> N
     assert body["chunks_stored"] == 1
     assert calls[0]["source_filename"] == "weekly-sync.txt"
     assert calls[0]["metadata"] == {"meeting_date": "2026-06-29"}
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "upload_filename", "content_type"),
+    [
+        ("distributed-dbms-meeting.vtt", "distributed DBMS.vtt", "text/vtt"),
+        ("distributed-dbms-meeting-edge-cases.vtt", "distributed DBMS.vtt", "application/octet-stream"),
+    ],
+)
+def test_upload_endpoint_accepts_real_world_vtt_variants(
+    fixture_name: str,
+    upload_filename: str,
+    content_type: str,
+    monkeypatch: Any,
+) -> None:
+    api_key = _create_test_api_key()
+    parsed_texts: list[str] = []
+
+    def fake_ingest_transcript_file(
+        *,
+        file_path: str,
+        workspace_id: str,
+        metadata: dict[str, Any],
+        source_filename: str,
+    ) -> list[TranscriptChunk]:
+        parsed_text = load_transcript(file_path)
+        parsed_texts.append(parsed_text)
+        return [
+            TranscriptChunk(
+                workspace_id=workspace_id,
+                filename=source_filename,
+                filename_hash="hash",
+                chunk_index=0,
+                content=parsed_text,
+                embedding=[0.1, 0.2, 0.3],
+            )
+        ]
+
+    monkeypatch.setattr(api_main, "ingest_transcript_file", fake_ingest_transcript_file)
+    fixture_bytes = (FIXTURES_DIR / fixture_name).read_bytes()
+
+    response = client.post(
+        "/upload",
+        headers={"X-API-Key": api_key},
+        data={"workspace_id": "workspace_123"},
+        files={"file": (upload_filename, fixture_bytes, content_type)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["filename"] == upload_filename
+    assert "cue-1" not in parsed_texts[0]
+    assert "align:start" not in parsed_texts[0]
+    assert "Replication improves availability." in parsed_texts[0]
+
+
+def test_upload_metadata_accepts_blank_vtt_mime_type() -> None:
+    class BlankMimeUpload:
+        filename = "distributed DBMS.vtt"
+        content_type = ""
+
+    assert api_main._validate_upload_metadata(BlankMimeUpload()) == "distributed DBMS.vtt"  # type: ignore[arg-type]
+
+
+def test_upload_endpoint_returns_specific_embedding_error(monkeypatch: Any) -> None:
+    api_key = _create_test_api_key()
+
+    def fake_ingest_transcript_file(
+        *,
+        file_path: str,
+        workspace_id: str,
+        metadata: dict[str, Any],
+        source_filename: str,
+    ) -> list[TranscriptChunk]:
+        raise RuntimeError("Unable to create Gemini embedding")
+
+    monkeypatch.setattr(api_main, "ingest_transcript_file", fake_ingest_transcript_file)
+
+    response = client.post(
+        "/upload",
+        headers={"X-API-Key": api_key},
+        data={"workspace_id": "workspace_123"},
+        files={"file": ("distributed DBMS.vtt", b"WEBVTT\n\n00:00.000 --> 00:01.000\nHello", "text/vtt")},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Unable to create transcript embeddings"}
 
 
 def test_upload_endpoint_rejects_bad_mime_type() -> None:

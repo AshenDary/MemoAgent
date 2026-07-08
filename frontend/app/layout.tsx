@@ -1,10 +1,15 @@
 import type { Metadata } from 'next';
-import { IBM_Plex_Mono, Space_Grotesk } from 'next/font/google';
+import { Fraunces, IBM_Plex_Mono, Inter } from 'next/font/google';
 import './globals.css';
 
-const spaceGrotesk = Space_Grotesk({
+const inter = Inter({
   subsets: ['latin'],
-  variable: '--font-sans'
+  variable: '--font-body'
+});
+
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  variable: '--font-display'
 });
 
 const ibmPlexMono = IBM_Plex_Mono({
@@ -15,7 +20,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: 'MemoAgent',
-  description: 'Workspace-scoped meeting memory with citations, uploads, and grounded answers.'
+  description: 'A workspace-scoped meeting memory ledger with grounded answers and citations.'
 };
 
 export default function RootLayout({
@@ -25,7 +30,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${spaceGrotesk.variable} ${ibmPlexMono.variable}`}>
+      <body className={`${inter.variable} ${fraunces.variable} ${ibmPlexMono.variable}`}>
         {children}
       </body>
     </html>

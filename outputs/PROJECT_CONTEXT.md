@@ -260,6 +260,7 @@ Phase 3 guardrails implemented:
 Phase 4 is complete in the local workspace and validated with tests:
 - `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes.
 - `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` all require `X-API-Key`.
+- Request-level rate limiting now returns HTTP 429 when a client exceeds the per-endpoint budget.
 - `POST /upload` validates transcript MIME type, extension, empty files, and the 10MB upload limit before ingestion.
 - `security/stores.py` provides pluggable persistence for API keys, agent session state, and audit logs, with Supabase-backed implementations and an in-memory fallback for local runs.
 - `api/main.py` wires the stores into request handling so agent session state and audit events are saved after requests.
@@ -276,13 +277,18 @@ Remaining live-deployment tasks:
 
 ## Phase 5 Current Status
 
-Phase 5 is the next implementation target. The repo still lacks the frontend scaffold, so the next work is to build the Next.js chat UI and deployment wiring.
+Phase 5 is implemented locally in the Next.js frontend:
+- The app uses the dark research-ledger design system.
+- The meeting ledger starts empty and only fills from real backend meeting data.
+- Users can create a workspace access key, upload transcripts, refresh meetings, and ask meeting-memory questions.
+- The visible UI uses one user-friendly memory query flow instead of exposing Agent/RAG or top-k controls.
+- Citations render as clickable ledger tabs that open a source drawer with transcript excerpts.
+- Browser calls go through the Next.js `/api/backend` proxy, which forwards to FastAPI and avoids local CORS fetch failures.
 
-Planned Phase 5 work:
-- Create the Next.js frontend shell for chat, upload, and citations.
-- Wire the frontend to the FastAPI endpoints with workspace-scoped API keys.
-- Add a deployment path for Railway (backend) and Vercel (frontend).
-- Update the README with the live architecture and setup flow.
+Remaining live-deployment tasks:
+- Deploy the FastAPI backend to Railway with live environment variables.
+- Deploy the Next.js frontend to Vercel with `API_BASE_URL` pointed at the Railway backend.
+- Verify Supabase-backed stores end-to-end with live credentials.
 
 ## Learning Goals
 - Understand and implement RAG from scratch, not just use a library
