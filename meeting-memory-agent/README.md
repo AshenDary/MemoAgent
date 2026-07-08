@@ -13,6 +13,7 @@ Meeting Memory Agent is an Agent-as-a-Service (GaaS) project that ingests meetin
 ## Tech Stack
 
 - Backend: FastAPI
+- Frontend: Next.js
 - Agent framework: LangGraph
 - LLM: Groq
 - Embeddings: Gemini
@@ -28,6 +29,7 @@ Meeting Memory Agent is an Agent-as-a-Service (GaaS) project that ingests meetin
 - `api/`: FastAPI entrypoint
 - `security/`: text sanitization and PII helpers
 - `tests/`: Phase 1 and Phase 2 tests
+- `../frontend/`: Phase 5 Next.js app shell
 
 ## Setup
 
@@ -81,7 +83,8 @@ Run the test suite:
 - Phase 1 is verified locally.
 - Phase 2 is complete in local mocked tests: retrieval, cited RAG answers, weak-evidence fallback, retrieval logging, `top_k` evaluation coverage, and RLS schema checks are implemented.
 - Phase 3 is complete for the local backend: LangGraph routes to workspace-scoped tools for transcript search, meeting summaries, decisions, action items, meeting inventory, and normal RAG answers. The API exposes `POST /agent/query` with session memory and tool-call rate limiting.
-- `GET /meetings` is implemented.
+- Phase 4 is complete locally: API-key auth, upload validation, Supabase-backed security stores, CORS configuration, and workspace-scoped persistence are implemented.
+- Phase 5 is implemented locally in `../frontend/`: workspace setup, transcript upload, meeting ledger, one user-friendly memory query flow, citation ledger tabs, and source drawer.
 
 ## Phase 3 API
 
@@ -118,15 +121,15 @@ Use these message styles to exercise the router:
 - `"List meetings"` -> `list_meetings`
 - General questions -> `answer_from_memory`
 
-## Next Work
+## Phase 4 and 5
 
-Phase 4 is now in progress:
+Phase 4 backend:
 
-- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes in local memory.
+- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes.
 - `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` require `X-API-Key`.
 - `POST /upload` validates transcript MIME type, file extension, empty files, and the 10MB upload limit.
 - CORS is deny-by-default unless `ALLOWED_ORIGINS` is set.
-- Supabase schema includes RLS-enabled `api_keys` and `audit_logs` tables for the next persistence step.
+- Supabase schema includes RLS-enabled API key, session, audit log, and transcript tables.
 
 Upload a transcript:
 
@@ -138,10 +141,11 @@ curl -X POST http://127.0.0.1:8000/upload \
   -F "file=@/path/to/meeting.txt;type=text/plain"
 ```
 
-Remaining Phase 4 hardening:
+Phase 5 frontend:
 
-- Persist API-key hashes in Supabase instead of local process memory.
-- Persist audit logs/session memory instead of keeping agent session state in process memory.
+- The Next.js app in `../frontend/` provides the workspace sidebar, transcript upload, meeting ledger, memory chat, citation ledger tabs, and source drawer.
+- Local setup and Vercel/Railway deployment notes live in `../frontend/README.md`.
+- Browser requests go through the Next.js `/api/backend` proxy, which forwards to the FastAPI backend configured by `API_BASE_URL`.
 
 ## Security Notes
 

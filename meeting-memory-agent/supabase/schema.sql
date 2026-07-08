@@ -71,6 +71,63 @@ $$;
 -- WHY THIS MATTERS: Multi-tenant data must not be readable across workspaces.
 alter table public.transcript_chunks enable row level security;
 
+-- WHAT THIS DOES: Resolves the workspace scope from the authenticated Supabase JWT.
+-- WHY THIS MATTERS: Row-level policies need a stable way to compare the current workspace to the row.
+create or replace function public.current_workspace_id()
+returns text
+language sql
+stable
+as $$
+    select coalesce(auth.jwt() ->> 'workspace_id', '');
+$$;
+
+-- WHAT THIS DOES: Limits transcript reads and writes to the caller's workspace.
+-- WHY THIS MATTERS: One workspace must never read another workspace's transcript rows.
+create policy transcript_chunks_select_own_workspace
+on public.transcript_chunks
+for select
+using (workspace_id = public.current_workspace_id());
+
+create policy transcript_chunks_insert_own_workspace
+on public.transcript_chunks
+for insert
+with check (workspace_id = public.current_workspace_id());
+
+-- WHAT THIS DOES: Stores per-session agent state without keeping it only in process memory.
+-- WHY THIS MATTERS: Phase 4 needs durable session memory so tool-call history survives restarts.
+create table if not exists public.agent_sessions (
+    id uuid primary key default gen_random_uuid(),
+    workspace_id text not null,
+    session_id text not null,
+    tool_call_count integer not null default 0 check (tool_call_count >= 0),
+    conversation_history jsonb not null default '[]'::jsonb,
+    created_at timestamptz not null default now(),
+    unique (workspace_id, session_id)
+);
+
+create index if not exists agent_sessions_workspace_idx
+on public.agent_sessions (workspace_id);
+
+alter table public.agent_sessions enable row level security;
+
+-- WHAT THIS DOES: Keeps one workspace from reading or mutating another workspace's agent state.
+-- WHY THIS MATTERS: Session memory is workspace-scoped and must not leak across tenants.
+create policy agent_sessions_select_own_workspace
+on public.agent_sessions
+for select
+using (workspace_id = public.current_workspace_id());
+
+create policy agent_sessions_insert_own_workspace
+on public.agent_sessions
+for insert
+with check (workspace_id = public.current_workspace_id());
+
+create policy agent_sessions_update_own_workspace
+on public.agent_sessions
+for update
+using (workspace_id = public.current_workspace_id())
+with check (workspace_id = public.current_workspace_id());
+
 -- WHAT THIS DOES: Stores hashed API keys for workspace-scoped backend authentication.
 -- WHY THIS MATTERS: Phase 4 auth must never persist plaintext API keys.
 create table if not exists public.api_keys (
@@ -87,6 +144,9 @@ on public.api_keys (workspace_id);
 
 alter table public.api_keys enable row level security;
 
+-- No client-side policy is defined for api_keys. The backend stores and checks hashes server-side,
+-- and the service-role key bypasses RLS for these writes and lookups.
+
 -- WHAT THIS DOES: Stores a safe audit trail for user queries and agent tool calls.
 -- WHY THIS MATTERS: Teams need traceability without logging full private transcript content.
 create table if not exists public.audit_logs (
@@ -102,6 +162,18 @@ create index if not exists audit_logs_workspace_created_idx
 on public.audit_logs (workspace_id, created_at desc);
 
 alter table public.audit_logs enable row level security;
+
+-- WHAT THIS DOES: Limits audit-log visibility to the owning workspace.
+-- WHY THIS MATTERS: Audit trails should stay private even if a client key is reused incorrectly.
+create policy audit_logs_select_own_workspace
+on public.audit_logs
+for select
+using (workspace_id = public.current_workspace_id());
+
+create policy audit_logs_insert_own_workspace
+on public.audit_logs
+for insert
+with check (workspace_id = public.current_workspace_id());
 
 -- Phase 1 note:
 -- No public anon policies are added here. With RLS enabled, direct anon-client reads/writes are blocked.

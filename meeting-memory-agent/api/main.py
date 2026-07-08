@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Optional
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -15,9 +15,11 @@ from pydantic import BaseModel, Field
 from agent.graph import build_graph
 from ingestion.pipeline import ingest_transcript_file
 from ingestion.transcript_loader import ALLOWED_TRANSCRIPT_EXTENSIONS, MAX_TRANSCRIPT_BYTES
-from retrieval.retriever import answer_question, list_meetings
+from retrieval.retriever import answer_question, clean_answer_text, list_meetings
 from security.auth import StoredAPIKey, create_api_key_record, model_to_dict, verify_api_key
 from security.sanitize import sanitize_text
+from security.rate_limit import build_rate_limiter
+from security.stores import build_security_stores
 
 app = FastAPI(title="Meeting Memory Agent API")
 app.add_middleware(
@@ -28,9 +30,11 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 _AGENT_GRAPH = build_graph()
-_AGENT_SESSIONS: dict[str, dict[str, Any]] = {}
-_API_KEY_STORE: dict[str, StoredAPIKey] = {}
+_API_KEY_STORE, _AGENT_SESSION_STORE, _AUDIT_LOG_STORE = build_security_stores()
+_AGENT_SESSIONS = _AGENT_SESSION_STORE
+_RATE_LIMITER = build_rate_limiter()
 ALLOWED_UPLOAD_MIME_TYPES = {
+    "",
     "text/plain",
     "text/vtt",
     "application/x-subrip",
@@ -121,16 +125,26 @@ def health_check() -> dict[str, str]:
 
 # WHAT THIS DOES: Creates a workspace API key and stores only its bcrypt hash.
 # WHY THIS WAY: The user sees the plaintext key once, while future requests verify against the hash.
-# SECURITY NOTE: This is an in-memory Phase 4 implementation; production should persist hashes in Supabase.
+# SECURITY NOTE: The plaintext key is returned once; only the bcrypt hash is stored.
 @app.post("/auth/create-key", response_model=CreateAPIKeyResponse)
-def create_workspace_api_key(request: CreateAPIKeyRequest) -> CreateAPIKeyResponse:
+def create_workspace_api_key(http_request: Request, request: CreateAPIKeyRequest) -> CreateAPIKeyResponse:
     """Create a new API key for one workspace."""
+    _enforce_rate_limit(client_id=_client_id(http_request), scope="auth:create-key")
     try:
         plaintext_key, record = create_api_key_record(workspace_id=request.workspace_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    _API_KEY_STORE[record.key_id] = record
+    try:
+        _API_KEY_STORE.save(record)
+        _write_audit_event(
+            workspace_id=record.workspace_id,
+            event_type="api_key_created",
+            metadata={"key_id": record.key_id},
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     logger.info("Created API key: workspace_id={} key_id={}", record.workspace_id, record.key_id)
     return CreateAPIKeyResponse(
         workspace_id=record.workspace_id,
@@ -144,6 +158,7 @@ def create_workspace_api_key(request: CreateAPIKeyRequest) -> CreateAPIKeyRespon
 # SECURITY NOTE: Workspace ID is explicit, question text is sanitized, and internal errors are not leaked.
 @app.post("/query", response_model=QueryResponse)
 def query_meeting_memory(
+    http_request: Request,
     request: QueryRequest,
     x_api_key: Optional[str] = Header(default=None),
 ) -> QueryResponse:
@@ -155,6 +170,12 @@ def query_meeting_memory(
         raise HTTPException(status_code=422, detail="workspace_id and question are required")
 
     _require_api_key(workspace_id=safe_workspace_id, api_key=x_api_key)
+    _enforce_rate_limit(client_id=_client_id(http_request), scope="query")
+    _write_audit_event(
+        workspace_id=safe_workspace_id,
+        event_type="query_requested",
+        metadata={"question_length": len(safe_question), "top_k": request.top_k},
+    )
 
     try:
         result = answer_question(
@@ -170,7 +191,7 @@ def query_meeting_memory(
 
     return QueryResponse(
         question=result.question,
-        answer=result.answer,
+        answer=clean_answer_text(result.answer),
         citations=result.citations,
         chunks=[_model_to_dict(chunk) for chunk in result.chunks],
     )
@@ -181,6 +202,7 @@ def query_meeting_memory(
 # SECURITY NOTE: The workspace_id is required, sanitized, and used as the only scope filter.
 @app.get("/meetings", response_model=MeetingsResponse)
 def get_meetings(
+    http_request: Request,
     workspace_id: str,
     x_api_key: Optional[str] = Header(default=None),
 ) -> MeetingsResponse:
@@ -190,6 +212,12 @@ def get_meetings(
         raise HTTPException(status_code=422, detail="workspace_id is required")
 
     _require_api_key(workspace_id=safe_workspace_id, api_key=x_api_key)
+    _enforce_rate_limit(client_id=_client_id(http_request), scope="meetings")
+    _write_audit_event(
+        workspace_id=safe_workspace_id,
+        event_type="meetings_listed",
+        metadata={},
+    )
 
     try:
         meetings = list_meetings(workspace_id=safe_workspace_id)
@@ -210,6 +238,7 @@ def get_meetings(
 # SECURITY NOTE: Workspace/session/message fields are sanitized, and internal tool errors are not leaked.
 @app.post("/agent/query", response_model=AgentQueryResponse)
 def query_agent(
+    http_request: Request,
     request: AgentQueryRequest,
     x_api_key: Optional[str] = Header(default=None),
 ) -> AgentQueryResponse:
@@ -222,9 +251,12 @@ def query_agent(
         raise HTTPException(status_code=422, detail="workspace_id, session_id, and message are required")
 
     _require_api_key(workspace_id=safe_workspace_id, api_key=x_api_key)
+    _enforce_rate_limit(client_id=_client_id(http_request), scope="agent/query")
 
-    session_key = _session_key(workspace_id=safe_workspace_id, session_id=safe_session_id)
-    prior_state = _AGENT_SESSIONS.get(session_key, {})
+    prior_state = _AGENT_SESSION_STORE.get(
+        workspace_id=safe_workspace_id,
+        session_id=safe_session_id,
+    )
     graph_input: dict[str, Any] = {
         "workspace_id": safe_workspace_id,
         "question": safe_message,
@@ -254,16 +286,28 @@ def query_agent(
         logger.exception("Agent query failed")
         raise HTTPException(status_code=500, detail="Unable to answer agent query") from exc
 
-    _AGENT_SESSIONS[session_key] = {
-        "tool_call_count": int(result.get("tool_call_count", 0)),
-        "conversation_history": list(result.get("conversation_history", [])),
-    }
+    _AGENT_SESSION_STORE.save(
+        workspace_id=safe_workspace_id,
+        session_id=safe_session_id,
+        tool_call_count=int(result.get("tool_call_count", 0)),
+        conversation_history=list(result.get("conversation_history", [])),
+    )
+    _write_audit_event(
+        workspace_id=safe_workspace_id,
+        session_id=safe_session_id,
+        event_type="agent_query_completed",
+        metadata={
+            "selected_tool": str(result.get("selected_tool", "answer_from_memory")),
+            "message_length": len(safe_message),
+            "tool_call_count": int(result.get("tool_call_count", 0)),
+        },
+    )
 
     return AgentQueryResponse(
         session_id=safe_session_id,
         workspace_id=safe_workspace_id,
         selected_tool=str(result.get("selected_tool", "answer_from_memory")),
-        answer=str(result.get("answer", "")),
+        answer=clean_answer_text(str(result.get("answer", ""))),
         citations=list(result.get("citations", [])),
         chunks=list(result.get("chunks", [])),
         tool_call_count=int(result.get("tool_call_count", 0)),
@@ -276,6 +320,7 @@ def query_agent(
 # SECURITY NOTE: MIME, extension, and 10MB size checks happen before writing a temp file for ingestion.
 @app.post("/upload", response_model=UploadResponse)
 async def upload_transcript(
+    http_request: Request,
     workspace_id: str = Form(..., min_length=1, max_length=128),
     meeting_date: Optional[str] = Form(default=None, max_length=10),
     file: UploadFile = File(...),
@@ -287,6 +332,7 @@ async def upload_transcript(
         raise HTTPException(status_code=422, detail="workspace_id is required")
 
     _require_api_key(workspace_id=safe_workspace_id, api_key=x_api_key)
+    _enforce_rate_limit(client_id=_client_id(http_request), scope="upload")
     safe_filename = _validate_upload_metadata(file)
     content = await _read_limited_upload(file)
     metadata = {}
@@ -310,10 +356,21 @@ async def upload_transcript(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Transcript upload ingestion failed")
-        raise HTTPException(status_code=500, detail="Unable to ingest transcript") from exc
+        status_code, detail = _ingestion_failure_response(exc)
+        raise HTTPException(status_code=status_code, detail=detail) from exc
     finally:
         if temp_path:
             Path(temp_path).unlink(missing_ok=True)
+
+    _write_audit_event(
+        workspace_id=safe_workspace_id,
+        event_type="transcript_uploaded",
+        metadata={
+            "filename": safe_filename,
+            "chunks_stored": len(records),
+            "file_size_bytes": len(content),
+        },
+    )
 
     return UploadResponse(
         workspace_id=safe_workspace_id,
@@ -325,23 +382,63 @@ async def upload_transcript(
     )
 
 
-def _session_key(*, workspace_id: str, session_id: str) -> str:
-    """Build a workspace-scoped session key for the in-memory dev session store."""
-    return f"{workspace_id}:{session_id}"
-
-
 def _require_api_key(*, workspace_id: str, api_key: Optional[str]) -> StoredAPIKey:
     """Authorize one API key for the requested workspace."""
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing API key")
 
-    for record in _API_KEY_STORE.values():
+    try:
+        records = _API_KEY_STORE.find_active_by_workspace(workspace_id=workspace_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    for record in records:
         if record.workspace_id != workspace_id:
             continue
         if verify_api_key(api_key=api_key, stored_hash=record.key_hash):
             return record
 
     raise HTTPException(status_code=403, detail="Invalid API key for workspace")
+
+
+def _enforce_rate_limit(*, client_id: str, scope: str) -> None:
+    """Raise a 429 response when the client exceeds its request budget."""
+    result = _RATE_LIMITER.allow(client_id=client_id, scope=scope)
+    if result.allowed:
+        return
+
+    raise HTTPException(
+        status_code=429,
+        detail="Rate limit exceeded. Please try again later.",
+        headers={"Retry-After": str(result.retry_after_seconds)},
+    )
+
+
+def _write_audit_event(
+    *,
+    workspace_id: str,
+    event_type: str,
+    session_id: Optional[str] = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Write an audit event without leaking request bodies or transcript content."""
+    try:
+        _AUDIT_LOG_STORE.write(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            event_type=event_type,
+            metadata=metadata or {},
+        )
+    except RuntimeError:
+        logger.exception("Audit logging failed")
+
+
+def _client_id(request: Optional[Request]) -> str:
+    """Return a stable client bucket for local in-memory rate limiting."""
+    if request is not None and request.client is not None and request.client.host:
+        return request.client.host
+
+    return os.getenv("RATE_LIMIT_CLIENT_ID", "local-client")
 
 
 def _validate_upload_metadata(file: UploadFile) -> str:
@@ -355,10 +452,19 @@ def _validate_upload_metadata(file: UploadFile) -> str:
         allowed = ", ".join(sorted(ALLOWED_TRANSCRIPT_EXTENSIONS))
         raise HTTPException(status_code=415, detail=f"Unsupported transcript format. Allowed: {allowed}")
 
-    if file.content_type not in ALLOWED_UPLOAD_MIME_TYPES:
+    content_type = (file.content_type or "").strip().lower()
+    if content_type not in ALLOWED_UPLOAD_MIME_TYPES:
         raise HTTPException(status_code=415, detail="Unsupported transcript MIME type")
 
     return Path(filename).name
+
+
+def _ingestion_failure_response(exc: Exception) -> tuple[int, str]:
+    """Map known ingestion dependency failures to safe client-facing errors."""
+    if isinstance(exc, RuntimeError) and str(exc) == "Unable to create Gemini embedding":
+        return 503, "Unable to create transcript embeddings"
+
+    return 500, "Unable to ingest transcript"
 
 
 async def _read_limited_upload(file: UploadFile) -> bytes:

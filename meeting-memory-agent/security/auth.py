@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import secrets
-from typing import Any
+from typing import Any, Optional
 
 import bcrypt
 from pydantic import BaseModel, Field
@@ -21,6 +21,7 @@ class StoredAPIKey(BaseModel):
     key_id: str
     workspace_id: str = Field(min_length=1)
     key_hash: str = Field(min_length=1)
+    revoked_at: Optional[str] = None
 
 
 # WHAT THIS DOES: Creates a one-time plaintext API key and its bcrypt storage record.
@@ -37,6 +38,7 @@ def create_api_key_record(*, workspace_id: str) -> tuple[str, StoredAPIKey]:
         key_id=key_id,
         workspace_id=safe_workspace_id,
         key_hash=hash_api_key(plaintext_key),
+        revoked_at=None,
     )
 
 

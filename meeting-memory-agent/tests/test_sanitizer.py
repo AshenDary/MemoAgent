@@ -45,3 +45,14 @@ def test_clean_transcript_removes_noise_and_masks_pii() -> None:
     assert "415-555-1212" not in cleaned
     assert "[REDACTED_EMAIL]" in cleaned
     assert "[REDACTED_PHONE]" in cleaned
+
+
+def test_clean_transcript_strips_xss_markup() -> None:
+    text = "<script>alert('xss')</script> <img src=x onerror=alert(1)> Alice: Launch approved."
+
+    cleaned = clean_transcript(text)
+
+    assert "<script>" not in cleaned
+    assert "</script>" not in cleaned
+    assert "<img" not in cleaned
+    assert "Launch approved" in cleaned
