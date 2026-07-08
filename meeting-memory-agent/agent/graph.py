@@ -15,6 +15,7 @@ from agent.tools import (
     search_transcripts,
     summarize_meeting,
 )
+from retrieval.retriever import clean_answer_text
 from security.sanitize import sanitize_text
 
 
@@ -171,7 +172,7 @@ def _synthesize_node(state: MeetingMemoryState) -> MeetingMemoryState:
     if selected_tool == "answer_from_memory" and isinstance(tool_result, dict):
         return {
             **state,
-            "answer": str(tool_result.get("answer", "")),
+            "answer": clean_answer_text(str(tool_result.get("answer", ""))),
             "citations": list(tool_result.get("citations", [])),
             "chunks": list(tool_result.get("chunks", [])),
         }
@@ -188,7 +189,7 @@ def _synthesize_node(state: MeetingMemoryState) -> MeetingMemoryState:
     if selected_tool == "summarize_meeting" and isinstance(tool_result, dict):
         return {
             **state,
-            "answer": str(tool_result.get("summary", "")),
+            "answer": clean_answer_text(str(tool_result.get("summary", ""))),
             "citations": list(tool_result.get("sources", [])),
             "chunks": [],
         }
@@ -197,7 +198,7 @@ def _synthesize_node(state: MeetingMemoryState) -> MeetingMemoryState:
         decisions = list(tool_result.get("decisions", []))
         return {
             **state,
-            "answer": "\n".join(decisions)
+            "answer": clean_answer_text("\n".join(decisions))
             if decisions
             else "I do not know based on the available meeting transcripts.",
             "citations": list(tool_result.get("sources", [])),
@@ -208,7 +209,7 @@ def _synthesize_node(state: MeetingMemoryState) -> MeetingMemoryState:
         action_items = list(tool_result.get("action_items", []))
         return {
             **state,
-            "answer": "\n".join(action_items)
+            "answer": clean_answer_text("\n".join(action_items))
             if action_items
             else "I do not know based on the available meeting transcripts.",
             "citations": list(tool_result.get("sources", [])),

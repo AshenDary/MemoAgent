@@ -70,8 +70,8 @@ def test_query_endpoint_returns_rag_answer(monkeypatch: Any) -> None:
     def fake_answer_question(*, question: str, workspace_id: str, top_k: int) -> RAGAnswer:
         return RAGAnswer(
             question=question,
-            answer="The launch plan was approved [weekly-sync.txt#0].",
-            citations=["weekly-sync.txt#0"],
+            answer="The launch plan was approved [source:weekly-sync.txt:chunk:0].",
+            citations=["source:weekly-sync.txt:chunk:0"],
             chunks=[
                 RetrievedChunk(
                     workspace_id=workspace_id,
@@ -98,7 +98,8 @@ def test_query_endpoint_returns_rag_answer(monkeypatch: Any) -> None:
     body = response.json()
     assert response.status_code == 200
     assert body["question"] == "Was the launch approved?"
-    assert body["citations"] == ["weekly-sync.txt#0"]
+    assert body["answer"] == "The launch plan was approved."
+    assert body["citations"] == ["source:weekly-sync.txt:chunk:0"]
     assert body["chunks"][0]["filename"] == "weekly-sync.txt"
 
 

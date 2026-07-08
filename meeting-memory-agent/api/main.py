@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from agent.graph import build_graph
 from ingestion.pipeline import ingest_transcript_file
 from ingestion.transcript_loader import ALLOWED_TRANSCRIPT_EXTENSIONS, MAX_TRANSCRIPT_BYTES
-from retrieval.retriever import answer_question, list_meetings
+from retrieval.retriever import answer_question, clean_answer_text, list_meetings
 from security.auth import StoredAPIKey, create_api_key_record, model_to_dict, verify_api_key
 from security.sanitize import sanitize_text
 from security.rate_limit import build_rate_limiter
@@ -191,7 +191,7 @@ def query_meeting_memory(
 
     return QueryResponse(
         question=result.question,
-        answer=result.answer,
+        answer=clean_answer_text(result.answer),
         citations=result.citations,
         chunks=[_model_to_dict(chunk) for chunk in result.chunks],
     )
@@ -307,7 +307,7 @@ def query_agent(
         session_id=safe_session_id,
         workspace_id=safe_workspace_id,
         selected_tool=str(result.get("selected_tool", "answer_from_memory")),
-        answer=str(result.get("answer", "")),
+        answer=clean_answer_text(str(result.get("answer", ""))),
         citations=list(result.get("citations", [])),
         chunks=list(result.get("chunks", [])),
         tool_call_count=int(result.get("tool_call_count", 0)),

@@ -26,6 +26,23 @@ PROMPT_INJECTION_PATTERN = re.compile(
     r"\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above)\s+instructions\b",
     re.IGNORECASE,
 )
+INLINE_SOURCE_PATTERN = re.compile(r"\[source:[^\]]+\]", re.IGNORECASE)
+EXTRA_SPACE_PATTERN = re.compile(r"[ \t]{2,}")
+SPACE_BEFORE_PUNCTUATION_PATTERN = re.compile(r"\s+([,.;:!?])")
+OPEN_PAREN_BEFORE_PUNCTUATION_PATTERN = re.compile(r"\(\s*([,.;:!?])")
+EMPTY_PARENS_PATTERN = re.compile(r"\(\s*\)")
+RAG_SYNTHESIS_INSTRUCTIONS = (
+    "You are the Meeting Memory Agent. Answer the user's question using only "
+    "the retrieved transcript context you've been given. Write your answer in "
+    "plain, natural prose, as if briefing a colleague on what was discussed — "
+    "do not include bracketed citations, source tags, chunk numbers, "
+    "filenames, or any '[source: ...]' style notation anywhere in your answer "
+    "text. The transcripts you were given will be shown to the user separately "
+    "as clickable source references, so you never need to cite them yourself. "
+    "If the retrieved context doesn't contain enough information to answer "
+    "confidently, say so directly and briefly, without listing sources or "
+    "chunk names."
+)
 
 
 # WHAT THIS DOES: Defines one retrieved transcript chunk returned by vector search.
@@ -280,7 +297,7 @@ def answer_question(
         )
 
     prompt = build_rag_prompt(question=safe_question, chunks=chunks)
-    answer = _call_groq(prompt=prompt, llm_client=llm_client)
+    answer = clean_answer_text(_call_groq(prompt=prompt, llm_client=llm_client))
     return RAGAnswer(
         question=safe_question,
         answer=answer,
@@ -290,29 +307,22 @@ def answer_question(
 
 
 # WHAT THIS DOES: Builds the model prompt from the user question and retrieved chunks.
-# WHY THIS MATTERS: A strict prompt helps the LLM stay grounded and cite exact meeting sources.
+# WHY THIS MATTERS: A strict prompt keeps the prose grounded while the UI handles source display separately.
 def build_rag_prompt(*, question: str, chunks: list[RetrievedChunk]) -> str:
-    """Create a grounded RAG prompt with citation labels."""
+    """Create a grounded RAG prompt without asking the model to cite inline."""
     context_blocks = [
         (
-            f"[{_citation_label(chunk)}]\n"
-            f"Source: {chunk.filename}\n"
+            f"Transcript excerpt {index}\n"
             f"Meeting date: {chunk.metadata.get('meeting_date', 'unknown')}\n"
-            f"Chunk: {chunk.chunk_index}\n"
             f"Similarity: {chunk.similarity:.3f}\n"
             f"Excerpt: {_sanitize_retrieved_content(chunk.content)}"
         )
-        for chunk in chunks
+        for index, chunk in enumerate(chunks, start=1)
     ]
     context = "\n\n".join(context_blocks)
 
     return (
-        "You are Meeting Memory Agent, an assistant that answers only from the provided "
-        "meeting transcript context.\n"
-        "If the context does not contain the answer, say you do not know based on the "
-        "available meeting transcripts.\n"
-        "Cite sources inline using the bracketed source labels exactly as provided. "
-        "Every factual claim must include a citation.\n\n"
+        f"{RAG_SYNTHESIS_INSTRUCTIONS}\n\n"
         f"Question:\n{question}\n\n"
         f"Meeting transcript context:\n{context}\n\n"
         "Answer:"
@@ -358,6 +368,20 @@ def _sanitize_retrieved_content(content: str) -> str:
     """Clean transcript content before it reaches the answer prompt."""
     cleaned = sanitize_text(content)
     return PROMPT_INJECTION_PATTERN.sub("[REMOVED_INSTRUCTION]", cleaned).strip()
+
+
+# WHAT THIS DOES: Removes accidental inline source tags from generated answer text.
+# WHY THIS MATTERS: The UI renders source chips from retrieved chunks, so prose should stay readable.
+def clean_answer_text(answer: str) -> str:
+    """Strip model-emitted source tags and tidy the surrounding prose."""
+    cleaned = INLINE_SOURCE_PATTERN.sub("", answer)
+    cleaned = SPACE_BEFORE_PUNCTUATION_PATTERN.sub(r"\1", cleaned)
+    cleaned = OPEN_PAREN_BEFORE_PUNCTUATION_PATTERN.sub(r"\1", cleaned)
+    cleaned = EMPTY_PARENS_PATTERN.sub("", cleaned)
+    cleaned = EXTRA_SPACE_PATTERN.sub(" ", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 # WHAT THIS DOES: Creates a compact citation label for one chunk.
@@ -421,7 +445,10 @@ def _call_groq(*, prompt: str, llm_client: Groq | None = None) -> str:
             messages=[
                 {
                     "role": "system",
-                    "content": "Answer meeting-memory questions with grounded citations only.",
+                    "content": (
+                        "Answer meeting-memory questions in plain prose from retrieved "
+                        "context only. Do not include inline citations or source tags."
+                    ),
                 },
                 {"role": "user", "content": prompt},
             ],
