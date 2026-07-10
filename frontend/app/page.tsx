@@ -97,6 +97,7 @@ export default function HomePage() {
   const threadRef = useRef<HTMLDivElement | null>(null);
 
   const lastCitations = messages.flatMap((message) => message.citations ?? []).slice(-6);
+  const hasUploadedTranscript = meetings.length > 0;
 
   useEffect(() => {
     threadRef.current?.scrollTo({
@@ -178,6 +179,10 @@ export default function HomePage() {
     }
     if (!apiKey.trim()) {
       setNotice({ tone: "error", text: "Add an API key to query this workspace." });
+      return;
+    }
+    if (!hasUploadedTranscript) {
+      setNotice({ tone: "error", text: "Upload a transcript before asking meeting-memory questions." });
       return;
     }
 
@@ -466,10 +471,15 @@ export default function HomePage() {
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
             onKeyDown={handleComposerKeyDown}
-            placeholder="Ask what the team decided, assigned, or deferred..."
+            placeholder={
+              hasUploadedTranscript
+                ? "Ask what the team decided, assigned, or deferred..."
+                : "Upload a transcript to unlock meeting-memory questions."
+            }
             rows={1}
+            disabled={!hasUploadedTranscript || isAsking}
           />
-          <button className="primary-button" type="submit" disabled={isAsking}>
+          <button className="primary-button" type="submit" disabled={isAsking || !hasUploadedTranscript}>
             {isAsking ? "Querying" : "Ask memory"}
           </button>
         </form>

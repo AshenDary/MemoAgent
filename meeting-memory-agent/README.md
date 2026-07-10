@@ -1,39 +1,32 @@
-# Meeting Memory Agent
+# MemoAgent Backend
 
-Meeting Memory Agent is an Agent-as-a-Service (GaaS) project that ingests meeting transcripts, stores them in Supabase pgvector, and answers questions with grounded, cited responses.
+This folder contains the FastAPI backend for MemoAgent. It receives transcript
+uploads, cleans and chunks them, stores embeddings in Supabase pgvector, and
+answers workspace-scoped meeting questions through a LangGraph agent.
 
-## What It Does
+## Main Features
 
-- Loads `.txt`, `.vtt`, and `.srt` transcript files
-- Cleans transcript noise and masks PII
-- Chunks text and creates Gemini embeddings
-- Stores chunk records in Supabase
-- Retrieves relevant context and answers questions through a RAG flow
+- Upload `.txt`, `.vtt`, and `.srt` transcripts
+- Validate upload type and reject files over 10MB
+- Clean timestamps, speaker labels, filler words, and unsafe text
+- Mask common PII before storage
+- Chunk transcripts for retrieval
+- Embed chunks with Gemini
+- Store searchable chunks in Supabase pgvector
+- Answer questions with Groq/Llama using retrieved transcript context
+- Protect workspace routes with API keys
 
-## Tech Stack
+## Demo Transcripts
 
-- Backend: FastAPI
-- Frontend: Next.js
-- Agent framework: LangGraph
-- LLM: Groq
-- Embeddings: Gemini
-- Vector DB: Supabase pgvector
-- Sanitization: bleach, Pydantic, regex, optional spaCy PERSON detection
-- Containerization: Docker
+Use these fictional files for safe demos:
 
-## Project Structure
+- `data/transcripts/demo/product-roadmap-review.vtt`
+- `data/transcripts/demo/customer-onboarding-retrospective.srt`
 
-- `ingestion/`: transcript loading, cleaning, chunking, embedding
-- `retrieval/`: semantic retrieval and answer generation
-- `agent/`: LangGraph tools and orchestration
-- `api/`: FastAPI entrypoint
-- `security/`: text sanitization and PII helpers
-- `tests/`: Phase 1 and Phase 2 tests
-- `../frontend/`: Phase 5 Next.js app shell
+They are intentionally fake and include decisions, action items, follow-ups, and
+access-key discussion so the app has useful content to answer from.
 
-## Setup
-
-### Local
+## Local Setup
 
 ```bash
 python -m venv .venv
@@ -41,7 +34,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file with the required variables:
+Create `.env`:
 
 ```env
 GEMINI_API_KEY=
@@ -53,108 +46,92 @@ SUPABASE_DB_URL=
 SECRET_KEY=
 ```
 
-### Docker
-
-Build and run the app with the included `Dockerfile`:
-
-```bash
-docker build -t memoagent:latest -f Dockerfile .
-docker run --rm --env-file .env -p 8000:8000 memoagent:latest
-```
-
-If the container expects transcript files, mount the data folder:
-
-```bash
-docker run --rm --env-file .env -p 8000:8000 \
-  -v $(pwd)/data:/app/data \
-  memoagent:latest
-```
-
-## Verification
-
-Run the test suite:
-
-```bash
-.venv/bin/python -m pytest
-```
-
-## Status
-
-- Phase 1 is verified locally.
-- Phase 2 is complete in local mocked tests: retrieval, cited RAG answers, weak-evidence fallback, retrieval logging, `top_k` evaluation coverage, and RLS schema checks are implemented.
-- Phase 3 is complete for the local backend: LangGraph routes to workspace-scoped tools for transcript search, meeting summaries, decisions, action items, meeting inventory, and normal RAG answers. The API exposes `POST /agent/query` with session memory and tool-call rate limiting.
-- Phase 4 is complete locally: API-key auth, upload validation, Supabase-backed security stores, CORS configuration, and workspace-scoped persistence are implemented.
-- Phase 5 is implemented locally in `../frontend/`: workspace setup, transcript upload, meeting ledger, one user-friendly memory query flow, citation ledger tabs, and source drawer.
-
-## Phase 3 API
-
 Start the API:
 
 ```bash
 .venv/bin/uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Ask the Phase 3 agent:
+Health check:
 
 ```bash
-API_KEY=$(curl -s -X POST http://127.0.0.1:8000/auth/create-key \
-  -H "Content-Type: application/json" \
-  -d '{"workspace_id": "workspace_123"}' | python -c "import json,sys; print(json.load(sys.stdin)['api_key'])")
+curl http://127.0.0.1:8000/health
+```
 
+## Basic Demo Flow
+
+Create a key:
+
+```bash
+curl -X POST http://127.0.0.1:8000/auth/create-key \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id": "demo_workspace"}'
+```
+
+Upload a sample transcript:
+
+```bash
+curl -X POST http://127.0.0.1:8000/upload \
+  -H "X-API-Key: YOUR_KEY_HERE" \
+  -F "workspace_id=demo_workspace" \
+  -F "file=@data/transcripts/demo/product-roadmap-review.vtt;type=text/vtt"
+```
+
+Ask a question:
+
+```bash
 curl -X POST http://127.0.0.1:8000/agent/query \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: $API_KEY" \
+  -H "X-API-Key: YOUR_KEY_HERE" \
   -d '{
-    "workspace_id": "workspace_123",
-    "session_id": "local_test",
-    "message": "What action items came from the launch meeting?",
+    "workspace_id": "demo_workspace",
+    "session_id": "demo_session",
+    "message": "What decisions were made in the roadmap meeting?",
     "top_k": 5
   }'
 ```
 
-Use these message styles to exercise the router:
+Useful demo questions:
 
-- `"Search for launch plan mentions"` -> `search_transcripts`
-- `"Summarize this meeting"` with `"meeting_id": "<filename_hash>"` -> `summarize_meeting`
-- `"What decisions were made about launch?"` -> `extract_decisions`
-- `"What action items are open?"` -> `find_action_items`
-- `"List meetings"` -> `list_meetings`
-- General questions -> `answer_from_memory`
+- `What decisions were made?`
+- `What action items came out of the meeting?`
+- `What did the team say about access keys?`
+- `List meetings`
 
-## Phase 4 and 5
+## API Endpoints
 
-Phase 4 backend:
+- `GET /health`: process health check
+- `POST /auth/create-key`: create a workspace API key
+- `POST /upload`: upload and ingest a transcript
+- `GET /meetings`: list stored meetings for a workspace
+- `POST /query`: direct RAG question endpoint
+- `POST /agent/query`: routed agent endpoint for search, summaries, decisions, and action items
 
-- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes.
-- `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` require `X-API-Key`.
-- `POST /upload` validates transcript MIME type, file extension, empty files, and the 10MB upload limit.
-- CORS is deny-by-default unless `ALLOWED_ORIGINS` is set.
-- Supabase schema includes RLS-enabled API key, session, audit log, and transcript tables.
-
-Upload a transcript:
+## Tests
 
 ```bash
-curl -X POST http://127.0.0.1:8000/upload \
-  -H "X-API-Key: $API_KEY" \
-  -F "workspace_id=workspace_123" \
-  -F "meeting_date=2026-06-29" \
-  -F "file=@/path/to/meeting.txt;type=text/plain"
+.venv/bin/python -m pytest
 ```
 
-Phase 5 frontend:
+For a faster backend smoke check:
 
-- The Next.js app in `../frontend/` provides the workspace sidebar, transcript upload, meeting ledger, memory chat, citation ledger tabs, and source drawer.
-- Local setup and Vercel/Railway deployment notes live in `../frontend/README.md`.
-- Browser requests go through the Next.js `/api/backend` proxy, which forwards to the FastAPI backend configured by `API_BASE_URL`.
+```bash
+.venv/bin/python -m pytest tests/test_api_phase2.py tests/test_agent_phase2.py tests/test_sanitizer.py
+```
+
+## Deployment
+
+Railway is the intended backend host. Set the service root to
+`meeting-memory-agent/`, provide the environment variables above, and expose the
+FastAPI port.
+
+Keep `SUPABASE_SERVICE_ROLE_KEY` on the backend only. Never place it in the
+frontend or in client-visible Vercel variables.
 
 ## Security Notes
 
-- Do not hardcode secrets.
-- Use the Supabase service-role key for server-side ingestion and live checks; keep the anon key for client-side reads.
-- Use parameterized queries through the Supabase client.
-- Sanitize all external text before storage or prompting.
-- Keep transcript uploads private and workspace-scoped.
-
-## More Context
-
-See `../outputs/PROJECT_CONTEXT.md` for the full project context and roadmap.
+- Store and compare API keys only as bcrypt hashes.
+- Keep Supabase Row Level Security enabled.
+- Use fictional or approved transcripts for public demos.
+- Treat workspace access keys like passwords.
+- Sanitize retrieved transcript content before passing it to the LLM.

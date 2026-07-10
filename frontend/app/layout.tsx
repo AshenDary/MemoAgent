@@ -20,7 +20,10 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: 'MemoAgent',
-  description: 'A workspace-scoped meeting memory ledger with grounded answers and citations.'
+  description: 'A workspace-scoped meeting memory ledger with grounded answers and citations.',
+  icons: {
+    icon: '/icon.jpeg'
+  }
 };
 
 export default function RootLayout({

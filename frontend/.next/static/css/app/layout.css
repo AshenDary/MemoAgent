@@ -253,6 +253,11 @@ button:disabled {
   opacity: 0.62;
 }
 
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {

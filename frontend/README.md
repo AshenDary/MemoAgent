@@ -1,65 +1,107 @@
 # MemoAgent Frontend
 
-This directory contains the Phase 5 Next.js client for MemoAgent: a dark research-ledger workspace for transcript upload, meeting memory questions, meeting inventory, and citation review.
+This is the Next.js interface for MemoAgent. It lets a user create or paste a
+workspace access key, upload a transcript, ask meeting-memory questions, and
+review the cited source snippets behind each answer.
 
-## What it does
+## What Users See
 
-- Provides a simple conversation surface backed by `POST /agent/query`
-- Supports transcript uploads into `POST /upload`
-- Lists workspace meetings from `GET /meetings`
-- Renders citations as clickable ledger tabs that open the source drawer
-- Includes workspace API-key creation for local setup through `POST /auth/create-key`
-- Proxies backend calls through `/api/backend` so browser requests avoid local CORS issues
+- Workspace setup panel
+- Transcript upload area for `.txt`, `.vtt`, and `.srt`
+- Meeting ledger showing uploaded files
+- Chat composer that unlocks only after a transcript is available
+- Citation tabs that open the source drawer
+- Backend status messages for upload, query, and key creation
 
-## Local setup
+## Local Setup
 
-1. Install dependencies:
+Install dependencies:
 
 ```bash
-cd frontend
 npm install
 ```
 
-2. Copy the environment example:
-
-```bash
-cp .env.example .env.local
-```
-
-3. Run the app:
+Run the frontend:
 
 ```bash
 npm run dev
 ```
 
-4. Open the local app:
+Open:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-## Backend setup
-
-Run the FastAPI app separately from `meeting-memory-agent/`:
+If `3000` is busy:
 
 ```bash
-.venv/bin/uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
+npm run dev -- -H 127.0.0.1 -p 3001
 ```
 
-By default, the frontend proxy forwards requests to `http://127.0.0.1:8000`.
-Set `API_BASE_URL` or `NEXT_PUBLIC_API_BASE_URL` in `.env.local` only if your backend runs somewhere else:
+## Backend Connection
+
+The frontend proxies browser requests through:
+
+```text
+/api/backend
+```
+
+By default, that proxy forwards to:
+
+```text
+http://127.0.0.1:8000
+```
+
+If your backend is somewhere else, create `.env.local`:
 
 ```env
 API_BASE_URL=http://127.0.0.1:8000
 ```
 
+For Vercel, set `API_BASE_URL` to the deployed Railway backend URL.
+
+## Demo Flow
+
+1. Start the backend.
+2. Start the frontend.
+3. Create an access key for a demo workspace.
+4. Upload one of the fictional sample transcripts:
+   - `../meeting-memory-agent/data/transcripts/demo/product-roadmap-review.vtt`
+   - `../meeting-memory-agent/data/transcripts/demo/customer-onboarding-retrospective.srt`
+5. Ask a question such as:
+   - `What decisions were made?`
+   - `What action items were assigned?`
+   - `What did the team say about access keys?`
+
+The chat composer is intentionally disabled until a transcript is uploaded or
+loaded from the meeting ledger.
+
+## Build Check
+
+```bash
+npm run build
+```
+
 ## Deployment
 
-- Vercel: set the project root to `frontend/`, set `API_BASE_URL` to the Railway backend URL, and deploy with the default Next.js settings.
-- Railway: deploy the FastAPI service from `meeting-memory-agent/` and provide the required API keys and Supabase variables.
+Deploy this folder as the Vercel project root:
 
-## Notes
+```text
+frontend/
+```
 
-- The UI expects the FastAPI backend to be running separately.
-- API requests use `X-API-Key` and the workspace ID supplied in the form.
-- API keys are held in client state only; do not paste production service-role credentials into the browser.
+Required Vercel environment variable:
+
+```env
+API_BASE_URL=https://your-railway-backend.example.com
+```
+
+Do not add backend secrets such as `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`,
+or `GEMINI_API_KEY` to public client-side variables.
+
+## Notes For Portfolio Use
+
+This UI is suitable for a portfolio demo with fictional transcripts. If you make
+the URL public, consider disabling open key creation or limiting the demo
+workspace so visitors cannot create unlimited API usage.

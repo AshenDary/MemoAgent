@@ -1,0 +1,43 @@
+WEBVTT
+
+NOTE
+Demo transcript for MemoAgent. This meeting is entirely fictional and contains no real customer, employee, or company information.
+
+00:00:00.000 --> 00:00:07.000
+Maya: Thanks, everyone. The goal today is to decide what ships in the July product release and what moves into the backlog.
+
+00:00:07.000 --> 00:00:16.000
+Luis: Support has seen repeated requests for bulk transcript upload. Teams with weekly department meetings do not want to upload files one by one.
+
+00:00:16.000 --> 00:00:27.000
+Priya: Engineering can build bulk upload if we limit the first version to ten files at a time and reuse the existing validation rules for file type and size.
+
+00:00:27.000 --> 00:00:39.000
+Jon: From the sales side, citation confidence is a stronger demo moment than bulk upload. Buyers keep asking whether the answer is traceable to the source transcript.
+
+00:00:39.000 --> 00:00:50.000
+Maya: Let's make citation confidence the release headline. Bulk upload can be the second feature if engineering capacity holds.
+
+00:00:50.000 --> 00:01:03.000
+Priya: Decision noted. July release priority one is citation confidence. Priority two is bulk upload behind a feature flag.
+
+00:01:03.000 --> 00:01:14.000
+Luis: I will write the support examples for low-confidence answers by Friday. Those examples should include vague questions and missing-context cases.
+
+00:01:14.000 --> 00:01:25.000
+Jon: I will update the demo script so it asks, "What did we decide about onboarding?" and then opens the source drawer.
+
+00:01:25.000 --> 00:01:36.000
+Maya: Action items are Luis on support examples, Jon on the demo script, and Priya on the citation confidence implementation plan.
+
+00:01:36.000 --> 00:01:47.000
+Priya: Risk is embedding cost during large uploads. We should add a warning before upload if the file set is likely to be expensive.
+
+00:01:47.000 --> 00:01:58.000
+Maya: Good call. Cost warning is not required for July launch, but it should be tracked as a follow-up.
+
+00:01:58.000 --> 00:02:08.000
+Luis: No blockers from support. I will also prepare three sample transcripts that are safe for public demos.
+
+00:02:08.000 --> 00:02:18.000
+Maya: Final recap: ship citation confidence first, keep bulk upload behind a flag, and track cost warnings as a follow-up.

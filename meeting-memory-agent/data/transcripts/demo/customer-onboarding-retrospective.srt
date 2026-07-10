@@ -1,0 +1,47 @@
+1
+00:00:00,000 --> 00:00:08,000
+Noah: This is a fictional demo transcript for MemoAgent. No real people, customers, or companies are represented.
+
+2
+00:00:08,000 --> 00:00:18,000
+Ari: The onboarding pilot went well overall, but new users got confused when the app asked for an access key before upload.
+
+3
+00:00:18,000 --> 00:00:31,000
+Camila: We should explain that the access key protects a workspace. It is not a share link. Anyone with the key can query or upload to that workspace.
+
+4
+00:00:31,000 --> 00:00:43,000
+Noah: Decision: the onboarding copy needs to describe the access key as a workspace password for the demo environment.
+
+5
+00:00:43,000 --> 00:00:55,000
+Ari: We also learned that users try to type a question before uploading a transcript. The chat box should stay disabled until there is at least one meeting.
+
+6
+00:00:55,000 --> 00:01:07,000
+Camila: Agreed. The locked state should say "Upload a transcript to unlock meeting-memory questions" so the next step is obvious.
+
+7
+00:01:07,000 --> 00:01:19,000
+Noah: Action item for Ari: update the onboarding checklist with three steps: create key, upload transcript, ask a question.
+
+8
+00:01:19,000 --> 00:01:31,000
+Ari: Action item for Camila: prepare a short privacy note that says demo transcripts should be fictional or already approved for public use.
+
+9
+00:01:31,000 --> 00:01:43,000
+Camila: The main risk is that portfolio visitors may assume this is production-ready for sensitive meetings. We should label it as a portfolio demo.
+
+10
+00:01:43,000 --> 00:01:55,000
+Noah: Follow-up: before public launch, disable open key creation or add a demo-only workspace with rate limits.
+
+11
+00:01:55,000 --> 00:02:07,000
+Ari: Success metric for the next demo is simple: a visitor uploads a sample transcript and asks for decisions or action items within two minutes.
+
+12
+00:02:07,000 --> 00:02:17,000
+Noah: Recap: clarify access keys, lock chat until upload, use fictional transcripts, and add rate limits before a public portfolio deploy.

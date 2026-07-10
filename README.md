@@ -1,205 +1,133 @@
-# Meeting Memory Agent (MemoAgent)
+# MemoAgent
 
-**The AI employee who remembers every meeting ever held.**
+MemoAgent is a meeting-memory app: upload a transcript, then ask questions like
+"What did we decide?", "Who owns the next step?", or "Where did we talk about
+onboarding?" The answer is generated from the uploaded transcript history and
+shown with source citations.
 
-`Python` `FastAPI` `LangGraph` `Next.js` `Supabase pgvector` `Groq` `Gemini`
+This repository contains both parts of the project:
 
-Teams lose decisions, action items, and context between meetings. MemoAgent ingests meeting transcripts, stores them in a vector database, and lets anyone on the team ask "what did we decide about X?" in plain language — and get back a grounded answer with the exact meeting and moment it came from, not a guess.
+- `meeting-memory-agent/`: FastAPI backend, transcript ingestion, retrieval, agent tools, and Supabase integration
+- `frontend/`: Next.js app for workspace setup, transcript upload, chat, and citation review
 
-It's built as an Agent-as-a-Service: multi-tenant, API-key scoped, with a security posture and a dark citation-first chat UI designed to actually be handed to a real team, not just run on a laptop.
+## What You Can Demo
 
----
+- Create a workspace access key
+- Upload `.txt`, `.vtt`, or `.srt` transcript files
+- Ask natural-language questions about uploaded meetings
+- See citations tied back to transcript chunks
+- List meetings already stored in a workspace
+- Try agent-style prompts for summaries, decisions, and action items
 
-## Contents
+Two safe fictional demo transcripts are included:
 
-- [Features](#features)
-- [Architecture](#architecture)
-- [Tech stack](#tech-stack)
-- [Screenshots](#screenshots)
-- [Getting started](#getting-started)
-- [Live Supabase and RAG checks](#live-supabase-and-rag-checks)
-- [Running with Docker](#running-with-docker)
-- [Frontend](#frontend)
-- [Security notes](#security-notes)
-- [Project status](#project-status)
-- [What this project is for](#what-this-project-is-for)
-- [Contributing](#contributing)
+- `meeting-memory-agent/data/transcripts/demo/product-roadmap-review.vtt`
+- `meeting-memory-agent/data/transcripts/demo/customer-onboarding-retrospective.srt`
 
----
+Use these for portfolio demos instead of real private meetings.
 
-## Features
+## How The App Works
 
-- **Ingests `.txt`, `.vtt`, and `.srt` transcripts** — timestamps, speaker tags, and filler words are stripped, and PII (names, emails, phone numbers) is redacted before anything touches the vector store.
-- **Grounded answers, not guesses** — every claim in an agent response is traceable to a specific transcript chunk, surfaced in the UI as a clickable citation. If the evidence isn't in the transcripts, the agent says so instead of filling the gap.
-- **Multi-tenant by design** — each business gets its own API key and workspace-isolated storage enforced by Supabase Row Level Security, so one team's meetings are never visible to another's.
-- **An actual agent, not a fixed pipeline** — a LangGraph router decides whether to search transcripts, summarize a meeting, extract decisions, or find action items, rather than running the same retrieval step on every message.
-- **Hardened API surface** — bcrypt-hashed API keys, per-workspace rate limiting, sanitized inputs, MIME/size-validated uploads, and audit-logged queries.
-- **A chat UI that looks like an archive, not a demo** — dark, citation-first Next.js frontend where sources render as inline timestamped "ledger tabs" that open the exact transcript excerpt they came from.
+1. The backend validates the uploaded transcript file.
+2. Transcript text is cleaned, sanitized, and split into chunks.
+3. Chunks are embedded with Gemini and stored in Supabase pgvector.
+4. When a user asks a question, the app retrieves relevant chunks for that workspace.
+5. Groq/Llama generates an answer using only the retrieved context.
+6. The frontend displays the answer with clickable source references.
 
-## Architecture
+## Local Setup
 
-**Ingestion**
-
-```
-Transcript file (.txt / .vtt / .srt)
-        |
-        v
-  sanitize + PII scrub (bleach, spaCy)
-        |
-        v
-  chunk (500 tokens, 50 overlap)
-        |
-        v
-  embed (Gemini, 768-dim)
-        |
-        v
-  Supabase pgvector, workspace-isolated via RLS
-```
-
-**Query**
-
-```
-"What did we decide about X?"
-        |
-        v
-  embed question (Gemini)
-        |
-        v
-  pgvector cosine similarity search (top-k)
-        |
-        v
-  LangGraph agent: router -> tool selection -> tool execution
-        |
-        v
-  Groq (Llama 3.3 70B) synthesis over retrieved chunks
-        |
-        v
-  Grounded answer + citation ledger tabs (Next.js UI)
-```
-
-Every request carries a workspace-scoped API key end to end, so retrieval, tool execution, and storage all stay within that workspace's boundary.
-
-## Tech stack
-
-| Layer | Tool | Purpose |
-|---|---|---|
-| Backend | FastAPI (Python) | REST API endpoints |
-| Agent framework | LangGraph | Routed, tool-calling agent logic |
-| LLM | Groq (Llama 3.3 70B) | Answer synthesis |
-| Embeddings | Gemini (`models/gemini-embedding-001`, 768-dim) | Text-to-vector |
-| Vector DB | Supabase (pgvector) | Storage + similarity search, RLS-isolated per workspace |
-| Sanitization | bleach + spaCy (optional) + regex | XSS stripping, PII redaction |
-| Frontend | Next.js | Dark, citation-first chat UI |
-| Containerization | Docker | Reproducible builds via the included Dockerfile |
-
-## Screenshots
-
-<!-- Drop a screenshot or short GIF of the chat UI here, e.g. docs/screenshot.png -->
-<!-- ![MemoAgent chat UI](docs/screenshot.png) -->
-
-## Getting started
-
-1. Create and activate a Python virtual environment and install dependencies:
-
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r meeting-memory-agent/requirements.txt
-   ```
-
-2. Copy `.env.example` to `.env` and set the required environment variables:
-
-   ```env
-   GROQ_API_KEY=
-   GEMINI_API_KEY=
-   GEMINI_EMBEDDING_MODEL=models/gemini-embedding-001
-   GEMINI_EMBEDDING_DIMENSIONS=768
-   SUPABASE_URL=
-   SUPABASE_KEY=
-   SUPABASE_DB_URL=
-   SECRET_KEY=
-   ```
-
-3. Place transcript files under `meeting-memory-agent/data/transcripts/raw/` (this folder is git-ignored).
-
-4. Run the Phase 1 unit tests to verify ingestion and sanitizer behavior:
-
-   ```bash
-   .venv/bin/python -m pytest meeting-memory-agent/tests/test_transcript_loader.py \
-       meeting-memory-agent/tests/test_sanitizer.py \
-       meeting-memory-agent/tests/test_embedder.py
-   ```
-
-## Live Supabase and RAG checks
-
-Run these from `meeting-memory-agent/` after `.env` is configured.
+Start the backend:
 
 ```bash
-# Apply schema through a direct Postgres connection.
-.venv/bin/python scripts/apply_supabase_schema.py
-
-# Confirm the app can read the transcript_chunks table.
-.venv/bin/python scripts/test_supabase_connection.py
-
-# Ingest a synthetic transcript, query it with Gemini + Supabase + Groq, then clean up test rows.
-.venv/bin/python scripts/run_live_rag_check.py
+cd meeting-memory-agent
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+.venv/bin/uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-If direct Postgres DNS does not resolve locally, paste `supabase/schema.sql` into the Supabase SQL Editor, run it there, then rerun the two check scripts. `SUPABASE_URL` should be the project base URL only, with no `/rest/v1` path.
-
-## Running with Docker
-
-You can build and run the project in a container using the included `meeting-memory-agent/Dockerfile`.
-
-```bash
-# Build the Docker image from the repo root
-docker build -f meeting-memory-agent/Dockerfile -t memoagent:latest .
-
-# Run the container, passing environment variables from .env and exposing port 8000
-docker run --rm --env-file .env -p 8000:8000 \
-  -v $(pwd)/meeting-memory-agent/data:/app/meeting-memory-agent/data \
-  memoagent:latest
-```
-
-Notes:
-- Ensure Docker is installed and running locally.
-- The container uses the same env vars as the local setup; provide them via `--env-file .env` or `-e` flags.
-- If the container's entrypoint uses a different port, change the `-p` mapping accordingly.
-
-## Frontend
-
-Run the Phase 5 UI from `frontend/`:
+Start the frontend in a second terminal:
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local
 npm run dev
 ```
 
-Set `API_BASE_URL` in `.env.local` only if the FastAPI backend is not running at `http://127.0.0.1:8000`. Vercel/Railway deployment notes live in `frontend/README.md`.
+Open:
 
-## Security notes
+```text
+http://127.0.0.1:3000
+```
 
-- No secrets are committed. Runtime keys load from `.env` via `python-dotenv`.
-- All inputs are sanitized with `bleach` and validated with Pydantic.
-- Database access goes through the Supabase Python client with parameterized queries — no f-string SQL.
-- PII redaction uses regex for emails/phones and spaCy for person names, with a safe fallback if spaCy isn't installed.
+If port `3000` is already taken, run:
 
-## Project status
+```bash
+npm run dev -- -H 127.0.0.1 -p 3001
+```
 
-- [x] **Phase 1 — Ingestion + Sanitization**: transcript loading, sanitization, PII masking, chunking, embedding record prep, Supabase persistence helpers, tests passing.
-- [x] **Phase 2 — RAG Core**: tenant-scoped pgvector retrieval, Groq answer generation with citation prompting, a LangGraph RAG entry point, the `/query` endpoint, a live RAG check script, and tests.
-- [x] **Phase 3 — Agent layer**: routed tool execution, session memory, audit logging.
-- [x] **Phase 4 — API + security hardening**: API-key auth, request-level rate limiting, Supabase-backed stores, XSS sanitization, upload validation, revoked-key handling, workspace-scoped persistence.
-- [x] **Phase 5 — Frontend + deployment**: dark research-ledger app shell, workspace API-key setup, transcript upload, meeting inventory, memory query flow, clickable citation ledger tabs, responsive mobile sheets, Vercel/Railway deployment notes.
+## Environment Variables
 
-All five build phases are implemented locally. Open items are tracked as GitHub issues rather than in this README.
+Create `meeting-memory-agent/.env` with:
 
-## What this project is for
+```env
+GROQ_API_KEY=
+GEMINI_API_KEY=
+SUPABASE_URL=
+SUPABASE_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_DB_URL=
+SECRET_KEY=
+```
 
-This started as a way to learn RAG, agentic workflows, and applied security by building something real rather than following a tutorial — every phase deliberately paired a feature with a security concept (parameterized queries, Row Level Security, rate limiting, hashed keys, prompt injection defense) instead of bolting security on at the end. It's also meant to work as an actual product: a business could hand this to their team today and get value from it, not just a proof of concept.
+For the frontend, create `frontend/.env.local` only if the backend is not on
+`http://127.0.0.1:8000`:
 
-## Contributing
+```env
+API_BASE_URL=http://127.0.0.1:8000
+```
 
-Contributions are welcome. Open an issue for feature requests or security concerns. If you're adding a feature that requires system packages (e.g. spaCy model downloads), document the installation steps in this README.
+## Access Keys
+
+The access key is a workspace-scoped API credential. It is not just a share link.
+Anyone with the workspace ID and access key can upload transcripts, list meetings,
+and ask questions for that workspace.
+
+For a public portfolio deployment, use a demo workspace, fictional transcripts,
+and tight rate limits. Do not use real meeting data unless the app is locked down
+for authenticated users.
+
+## Deployment Notes
+
+Recommended portfolio setup:
+
+- Deploy the backend from `meeting-memory-agent/` on Railway.
+- Deploy the frontend from `frontend/` on Vercel.
+- Set the Vercel `API_BASE_URL` environment variable to the Railway backend URL.
+- Do not expose service-role Supabase credentials in the frontend.
+- Consider disabling open key creation before sharing the app publicly.
+
+## Verification
+
+Backend tests:
+
+```bash
+cd meeting-memory-agent
+.venv/bin/python -m pytest
+```
+
+Frontend build:
+
+```bash
+cd frontend
+npm run build
+```
+
+## Security Notes
+
+- Secrets are read from environment variables, never hardcoded.
+- API keys are stored as bcrypt hashes.
+- Uploads are limited to supported transcript formats and 10MB.
+- Transcript and prompt content is sanitized before processing.
+- Supabase Row Level Security should stay enabled for workspace isolation.
