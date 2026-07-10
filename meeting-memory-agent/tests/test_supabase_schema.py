@@ -17,15 +17,26 @@ def test_schema_defines_transcript_chunks_table() -> None:
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
 
     assert "create table if not exists public.transcript_chunks" in schema_sql
+    assert "create or replace function public.current_workspace_id()" in schema_sql
+    assert "create policy transcript_chunks_select_own_workspace" in schema_sql
+    assert "create policy transcript_chunks_insert_own_workspace" in schema_sql
     assert "create table if not exists public.api_keys" in schema_sql
     assert "key_hash text not null" in schema_sql
+    assert "create table if not exists public.agent_sessions" in schema_sql
+    assert "conversation_history jsonb not null default '[]'::jsonb" in schema_sql
+    assert "create policy agent_sessions_select_own_workspace" in schema_sql
+    assert "create policy agent_sessions_insert_own_workspace" in schema_sql
+    assert "create policy agent_sessions_update_own_workspace" in schema_sql
     assert "create table if not exists public.audit_logs" in schema_sql
+    assert "create policy audit_logs_select_own_workspace" in schema_sql
+    assert "create policy audit_logs_insert_own_workspace" in schema_sql
     assert "embedding vector(768) not null" in schema_sql
     assert "create or replace function public.match_transcript_chunks" in schema_sql
     assert "alter table public.transcript_chunks enable row level security" in schema_sql
     assert "alter table public.api_keys enable row level security" in schema_sql
+    assert "alter table public.agent_sessions enable row level security" in schema_sql
     assert "alter table public.audit_logs enable row level security" in schema_sql
-    assert "create policy" not in schema_sql.lower()
+    assert "No client-side policy is defined for api_keys" in schema_sql
     assert "No public anon policies are added here" in schema_sql
 
 

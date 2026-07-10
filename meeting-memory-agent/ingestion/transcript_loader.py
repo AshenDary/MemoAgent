@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
 ALLOWED_TRANSCRIPT_EXTENSIONS = {".txt", ".vtt", ".srt"}
 MAX_TRANSCRIPT_BYTES = 10 * 1024 * 1024
+WEBVTT_HEADER_PATTERN = re.compile(r"^\ufeff?WEBVTT(?:[ \t].*)?$", re.IGNORECASE)
+TIMESTAMP_PATTERN = re.compile(
+    r"^(?:(?:\d{2,}:)?[0-5]\d:[0-5]\d[.,]\d{3})"
+    r"\s*-->\s*"
+    r"(?:(?:\d{2,}:)?[0-5]\d:[0-5]\d[.,]\d{3})"
+    r"(?:\s+.*)?$"
+)
 
 
 def load_transcript(file_path: str | Path) -> str:
@@ -52,31 +60,67 @@ def _validate_transcript_path(file_path: str | Path) -> Path:
 def _parse_vtt(raw_text: str) -> str:
     """Parse WebVTT transcript content into plain text."""
     lines = raw_text.splitlines()
+    header_index = _find_vtt_header_index(lines)
+    if header_index is None:
+        raise ValueError("Invalid WebVTT transcript: missing WEBVTT header")
+
     cleaned_lines: list[str] = []
-    skip_block = False
+    block: list[str] = []
 
-    for line in lines:
-        stripped = line.strip()
-
-        if not stripped:
-            skip_block = False
-            cleaned_lines.append("")
+    for line in [*lines[header_index + 1 :], ""]:
+        if line.strip():
+            block.append(line)
             continue
 
-        upper = stripped.upper()
-        if upper == "WEBVTT" or upper.startswith(("WEBVTT ", "KIND:", "LANGUAGE:")):
-            continue
-
-        if upper.startswith(("NOTE", "STYLE", "REGION")):
-            skip_block = True
-            continue
-
-        if skip_block or _is_timestamp_line(stripped):
-            continue
-
-        cleaned_lines.append(_remove_vtt_voice_tag(stripped))
+        cleaned_lines.extend(_parse_vtt_block(block))
+        block = []
 
     return _normalize_lines(cleaned_lines)
+
+
+def _find_vtt_header_index(lines: list[str]) -> int | None:
+    """Return the WebVTT header line index when present."""
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if WEBVTT_HEADER_PATTERN.match(stripped):
+            return index
+
+        return None
+
+    return None
+
+
+def _parse_vtt_block(block: list[str]) -> list[str]:
+    """Return spoken text lines from one WebVTT block."""
+    if not block:
+        return []
+
+    first_line = block[0].strip()
+    upper_first = first_line.upper()
+    if upper_first.startswith(("NOTE", "STYLE", "REGION", "KIND:", "LANGUAGE:")):
+        return []
+
+    timestamp_index = _timestamp_line_index(block)
+    if timestamp_index is None:
+        return []
+
+    cue_text = [_remove_vtt_voice_tag(line.strip()) for line in block[timestamp_index + 1 :] if line.strip()]
+    if not cue_text:
+        return []
+
+    return [*cue_text, ""]
+
+
+def _timestamp_line_index(block: list[str]) -> int | None:
+    """Return the index of a WebVTT cue timing line within a cue block."""
+    for index, line in enumerate(block[:2]):
+        if _is_timestamp_line(line.strip()):
+            return index
+
+    return None
 
 
 # WHAT THIS DOES: Removes SRT cue numbers and timings while keeping the words people said.
@@ -106,7 +150,7 @@ def _parse_srt(raw_text: str) -> str:
 # SECURITY NOTE: This avoids storing playback metadata in the vector database.
 def _is_timestamp_line(line: str) -> bool:
     """Return True when a line looks like a VTT or SRT timestamp cue."""
-    return "-->" in line and any(char.isdigit() for char in line)
+    return bool(TIMESTAMP_PATTERN.match(line))
 
 
 # WHAT THIS DOES: Converts WebVTT voice tags into readable speaker labels.

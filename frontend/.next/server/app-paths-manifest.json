@@ -1,1 +1,8 @@
+<<<<<<< HEAD
 {}
+=======
+{
+  "/api/backend/[...path]/route": "app/api/backend/[...path]/route.js",
+  "/page": "app/page.js"
+}
+>>>>>>> c47715c19e099094eee0fc390a88ea674f2ca69e

@@ -7,6 +7,9 @@ import pytest
 from ingestion.transcript_loader import load_transcript
 
 
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
 def test_load_plain_text_transcript(tmp_path: Path) -> None:
     file_path = tmp_path / "meeting.txt"
     file_path.write_text(" Alice: Hello team. \n\n Bob: Hi Alice. ", encoding="utf-8")
@@ -31,6 +34,30 @@ def test_load_webvtt_transcript_removes_metadata_and_timings(tmp_path: Path) -> 
         "Alice: Let's approve the launch plan.\n\n"
         "Bob: I will update the budget."
     )
+
+
+def test_load_standard_distributed_dbms_vtt_fixture() -> None:
+    file_path = FIXTURES_DIR / "distributed-dbms-meeting.vtt"
+
+    loaded = load_transcript(file_path)
+
+    assert "cue-1" not in loaded
+    assert "00:00:03.215" not in loaded
+    assert "Susan S. Caluya: So, at the end of this lesson," in loaded
+    assert "Replication improves availability." in loaded
+
+
+def test_load_edge_case_distributed_dbms_vtt_fixture() -> None:
+    file_path = FIXTURES_DIR / "distributed-dbms-meeting-edge-cases.vtt"
+
+    loaded = load_transcript(file_path)
+
+    assert "WEBVTT" not in loaded
+    assert "NOTE" not in loaded
+    assert "empty-cue" not in loaded
+    assert "align:start" not in loaded
+    assert "Susan S. Caluya: So, at the end of this lesson," in loaded
+    assert "Replication improves availability." in loaded
 
 
 def test_load_srt_transcript_removes_sequence_numbers_and_timings(tmp_path: Path) -> None:

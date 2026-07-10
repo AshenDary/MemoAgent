@@ -28,7 +28,7 @@ def test_build_graph_routes_default_questions_to_rag_tool(monkeypatch: Any) -> N
         session.tool_call_count += 1
         return {
             "question": question,
-            "answer": f"Answered for {workspace_id} with k={top_k}",
+            "answer": f"Answered for {workspace_id} with k={top_k} [source:weekly-sync.txt:chunk:0]",
             "citations": ["source:weekly-sync.txt:chunk:0"],
             "chunks": [],
         }

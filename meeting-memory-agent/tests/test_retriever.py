@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -98,7 +99,7 @@ def test_retrieve_relevant_chunks_rejects_empty_query() -> None:
         retrieve_relevant_chunks(query="   ", workspace_id="workspace_123")
 
 
-def test_build_rag_prompt_includes_citations_and_context() -> None:
+def test_build_rag_prompt_uses_plain_prose_citation_instruction() -> None:
     chunk = RetrievedChunk(
         workspace_id="workspace_123",
         filename="weekly-sync.txt",
@@ -110,12 +111,14 @@ def test_build_rag_prompt_includes_citations_and_context() -> None:
 
     prompt = build_rag_prompt(question="What did we decide?", chunks=[chunk])
 
-    assert "[source:weekly-sync.txt:chunk:2:date:2026-06-15]" in prompt
-    assert "Source: weekly-sync.txt" in prompt
+    assert "[source:weekly-sync.txt:chunk:2:date:2026-06-15]" not in prompt
+    assert "Source: weekly-sync.txt" not in prompt
+    assert "Chunk: 2" not in prompt
     assert "Similarity: 0.880" in prompt
     assert "The team approved the launch plan." in prompt
-    assert "If the context does not contain the answer" in prompt
-    assert "Every factual claim must include a citation" in prompt
+    assert "If the retrieved context doesn't contain enough information" in prompt
+    assert "do not include bracketed citations" in prompt
+    assert "clickable source references" in prompt
 
 
 def test_answer_question_returns_grounded_answer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -144,9 +147,7 @@ def test_answer_question_returns_grounded_answer(monkeypatch: pytest.MonkeyPatch
         llm_client=fake_groq,
     )
 
-    assert result.answer == (
-        "The launch plan was approved [source:weekly-sync.txt:chunk:0:date:2026-06-15]."
-    )
+    assert result.answer == "The launch plan was approved."
     assert result.citations == ["source:weekly-sync.txt:chunk:0:date:2026-06-15"]
     assert fake_groq.messages is not None
     assert "The launch plan was approved." in fake_groq.messages[1]["content"]
@@ -231,3 +232,72 @@ def test_answer_question_returns_unknown_when_evidence_is_weak(
 
     assert result.answer == "I do not know based on the available meeting transcripts."
     assert result.citations == ["source:weekly-sync.txt:chunk:0:date:2026-06-15"]
+
+
+@pytest.mark.parametrize(
+    ("question", "llm_answer"),
+    [
+        (
+            "what is the meeting about",
+            (
+                "The meeting appears to be about distributed database management systems "
+                "(DBMS) [source:distributed DBMS.vtt:chunk:7], including ATM transactions "
+                "[source:distributed DBMS.vtt:chunk:7] and data consistency "
+                "[source:Distributed DBMS.vtt:chunk:13]."
+            ),
+        ),
+        (
+            "what is DBMS based on the professor",
+            (
+                "Based on the professor, DBMS is a system for storing and managing data "
+                "[SOURCE:distributed DBMS.vtt:chunk:3], and a distributed DBMS stores data "
+                "across multiple locations [source:distributed DBMS.vtt:chunk:4]."
+            ),
+        ),
+    ],
+)
+def test_answer_question_strips_inline_source_tags_but_keeps_retrieved_citations(
+    question: str,
+    llm_answer: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(retriever, "embed_text", lambda text, task_type: [0.1, 0.2, 0.3])
+    fake_client = FakeSupabaseClient(
+        rows=[
+            {
+                "id": "chunk-7",
+                "workspace_id": "workspace_123",
+                "filename": "distributed DBMS.vtt",
+                "chunk_index": 7,
+                "content": "The class discusses distributed DBMS and ATM transactions.",
+                "metadata": {"meeting_date": "2026-07-01", "timestamp": "00:10:15.000"},
+                "similarity": 0.91,
+            },
+            {
+                "id": "chunk-13",
+                "workspace_id": "workspace_123",
+                "filename": "Distributed DBMS.vtt",
+                "chunk_index": 13,
+                "content": "The professor explains data consistency across distributed locations.",
+                "metadata": {"meeting_date": "2026-07-01", "timestamp": "00:18:42.000"},
+                "similarity": 0.88,
+            },
+        ]
+    )
+
+    result = answer_question(
+        question=question,
+        workspace_id="workspace_123",
+        client=fake_client,
+        llm_client=FakeGroqClient(llm_answer),
+    )
+
+    assert not re.search(r"\[source:.*?\]", result.answer, flags=re.IGNORECASE)
+    assert result.citations == [
+        "source:distributed DBMS.vtt:chunk:7:date:2026-07-01",
+        "source:Distributed DBMS.vtt:chunk:13:date:2026-07-01",
+    ]
+    assert [(chunk.filename, chunk.chunk_index, chunk.metadata["timestamp"]) for chunk in result.chunks] == [
+        ("distributed DBMS.vtt", 7, "00:10:15.000"),
+        ("Distributed DBMS.vtt", 13, "00:18:42.000"),
+    ]

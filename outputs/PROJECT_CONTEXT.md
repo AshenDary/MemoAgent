@@ -48,8 +48,10 @@ meeting-memory-agent/
 |   |-- graph.py                 # LangGraph agent definition
 |   `-- tools.py                 # tools the agent can call
 |-- api/
-|   `-- main.py                  # FastAPI: POST /upload, POST /query, GET /meetings
+|   `-- main.py                  # FastAPI: POST /auth/create-key, /upload, /query, /agent/query, /meetings
 |-- security/
+|   |-- auth.py                  # hashed API keys and verification helpers
+|   |-- stores.py                # API key, session, and audit-log persistence
 |   `-- sanitize.py              # input validation, injection prevention
 |-- tests/
 |   `-- test_sanitizer.py        # security tests
@@ -251,22 +253,42 @@ Phase 3 guardrails implemented:
 - Short conversation history in graph state
 - Loguru audit logs for tool calls
 - Retrieved content sanitization before prompting or extraction
-- `POST /agent/query` API endpoint with in-memory local session state
+- `POST /agent/query` API endpoint with persisted per-session state through the security store layer
 
 ## Phase 4 Current Status
 
-Phase 4 is in progress:
-- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes in local memory.
-- `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` require `X-API-Key`.
-- `POST /upload` validates transcript MIME type, extension, empty files, and the 10MB upload limit.
-- CORS is deny-by-default unless `ALLOWED_ORIGINS` is set.
-- Supabase schema includes RLS-enabled `api_keys` and `audit_logs` tables.
-- Tests cover auth creation, missing keys, cross-workspace rejection, upload validation, and oversized files.
+Phase 4 is complete in the local workspace and validated with tests:
+- `POST /auth/create-key` creates workspace API keys and stores only bcrypt hashes.
+- `POST /query`, `POST /agent/query`, `GET /meetings`, and `POST /upload` all require `X-API-Key`.
+- Request-level rate limiting now returns HTTP 429 when a client exceeds the per-endpoint budget.
+- `POST /upload` validates transcript MIME type, extension, empty files, and the 10MB upload limit before ingestion.
+- `security/stores.py` provides pluggable persistence for API keys, agent session state, and audit logs, with Supabase-backed implementations and an in-memory fallback for local runs.
+- `api/main.py` wires the stores into request handling so agent session state and audit events are saved after requests.
+- The Supabase schema includes RLS-enabled `api_keys`, `agent_sessions`, and `audit_logs` tables plus workspace-scoped policies.
+- Tests now cover auth creation, missing keys, cross-workspace rejection, upload validation, oversized files, XSS sanitization, revoked-key handling, and agent-session persistence behavior.
 
-Remaining Phase 4 hardening:
-- Persist API-key hashes in Supabase instead of local process memory.
-- Persist audit logs and session memory instead of keeping agent session state in process memory.
-- Add broader security tests for XSS and auth edge cases.
+Validated outcomes:
+- Local pytest suite passes on Python 3.9.
+- Live Supabase verification scripts are available for schema and store CRUD checks.
+
+Remaining live-deployment tasks:
+- Push `supabase/schema.sql` to the real Supabase project using the SQL Editor or a reachable direct Postgres URL.
+- Verify Supabase-backed stores end-to-end with live credentials instead of only local fallback and mocked tests.
+
+## Phase 5 Current Status
+
+Phase 5 is implemented locally in the Next.js frontend:
+- The app uses the dark research-ledger design system.
+- The meeting ledger starts empty and only fills from real backend meeting data.
+- Users can create a workspace access key, upload transcripts, refresh meetings, and ask meeting-memory questions.
+- The visible UI uses one user-friendly memory query flow instead of exposing Agent/RAG or top-k controls.
+- Citations render as clickable ledger tabs that open a source drawer with transcript excerpts.
+- Browser calls go through the Next.js `/api/backend` proxy, which forwards to FastAPI and avoids local CORS fetch failures.
+
+Remaining live-deployment tasks:
+- Deploy the FastAPI backend to Railway with live environment variables.
+- Deploy the Next.js frontend to Vercel with `API_BASE_URL` pointed at the Railway backend.
+- Verify Supabase-backed stores end-to-end with live credentials.
 
 ## Learning Goals
 - Understand and implement RAG from scratch, not just use a library
