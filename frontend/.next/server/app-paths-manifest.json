@@ -1,5 +1,0 @@
-{
-  "/page": "app/page.js",
-  "/api/backend/[...path]/route": "app/api/backend/[...path]/route.js",
-  "/icon.jpeg/route": "app/icon.jpeg/route.js"
-}

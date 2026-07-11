@@ -3,9 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     path?: string[];
-  };
+  }>;
 };
 
 export const runtime = "nodejs";
@@ -19,7 +19,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
 }
 
 async function proxyRequest(request: NextRequest, context: RouteContext): Promise<NextResponse> {
-  const target = backendUrl(context.params.path ?? [], request.nextUrl.search);
+  const params = await context.params;
+  const target = backendUrl(params.path ?? [], request.nextUrl.search);
   const headers = forwardedHeaders(request);
   const init: RequestInit = {
     method: request.method,

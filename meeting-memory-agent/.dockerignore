@@ -1,5 +1,8 @@
-.env
-.git
-.gitignore
+.venv
+venv
 __pycache__
-tests/
+*.pyc
+.pytest_cache
+.env
+data/transcripts/raw/*
+!data/transcripts/raw/.gitkeep
