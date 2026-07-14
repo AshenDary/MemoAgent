@@ -10,6 +10,8 @@ This repository contains both parts of the project:
 - `meeting-memory-agent/`: FastAPI backend, transcript ingestion, retrieval, agent tools, and Supabase integration
 - `frontend/`: Next.js app for workspace setup, transcript upload, chat, and citation review
 
+## Deployed Link: https://memo-agent-liard.vercel.app
+
 ## What You Can Demo
 
 - Create a workspace access key
