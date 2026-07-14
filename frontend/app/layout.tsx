@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   title: 'MemoAgent',
   description: 'A workspace-scoped meeting memory ledger with grounded answers and citations.',
   icons: {
-    icon: '/icon.jpeg'
+    icon: '/icon.png'
   }
 };
 
